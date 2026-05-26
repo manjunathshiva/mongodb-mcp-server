@@ -25,7 +25,7 @@ class TestToolOne extends ToolBase {
     static toolName = "test-tool-one";
     public description = "A test tool one for verification tests";
     static category: ToolCategory = "mongodb";
-    static operationType: OperationType = "delete";
+    static operationType: OperationType = "update";
     public argsShape = {};
     protected async execute(): Promise<CallToolResult> {
         return Promise.resolve({
@@ -46,7 +46,7 @@ class TestToolTwo extends ToolBase {
     static toolName = "test-tool-two";
     public description = "A test tool two for verification tests";
     static category: ToolCategory = "mongodb";
-    static operationType: OperationType = "delete";
+    static operationType: OperationType = "update";
     public argsShape = {};
     protected async execute(): Promise<CallToolResult> {
         return Promise.resolve({
@@ -157,8 +157,6 @@ describe("Server integration test", () => {
                 // Check that non-read tools are NOT available
                 expect(tools.tools.some((tool) => tool.name === "insert-many")).toBe(false);
                 expect(tools.tools.some((tool) => tool.name === "update-many")).toBe(false);
-                expect(tools.tools.some((tool) => tool.name === "delete-many")).toBe(false);
-                expect(tools.tools.some((tool) => tool.name === "drop-collection")).toBe(false);
             });
         },
         {

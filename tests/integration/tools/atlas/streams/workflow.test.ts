@@ -79,57 +79,6 @@ describeWithStreams("atlas-streams workflows", (integration) => {
             });
         });
 
-        describe("connection teardown", () => {
-            const teardownConnName = `teardownconn${randomId().slice(0, 8)}`;
-
-            beforeAll(async () => {
-                const response = await integration.mcpClient().callTool({
-                    name: "atlas-streams-build",
-                    arguments: {
-                        projectId: getProjectId(),
-                        resource: "connection",
-                        workspaceName: getWorkspaceName(),
-                        connectionName: teardownConnName,
-                        connectionType: "Https",
-                        connectionConfig: {
-                            url: "https://httpbin.org/post",
-                        },
-                    },
-                });
-                const content = getResponseContent(response.content);
-                expect(response.isError, `Failed to create teardown connection: ${content}`).toBeFalsy();
-            }, 30_000);
-
-            it("creates connection for teardown test", async () => {
-                const response = await integration.mcpClient().callTool({
-                    name: "atlas-streams-discover",
-                    arguments: {
-                        projectId: getProjectId(),
-                        action: "inspect-connection",
-                        workspaceName: getWorkspaceName(),
-                        resourceName: teardownConnName,
-                    },
-                });
-                const content = getResponseContent(response.content);
-                expect(response.isError).toBeFalsy();
-                expect(content).toContain(teardownConnName);
-            });
-
-            it("deletes connection via teardown tool", async () => {
-                const response = await integration.mcpClient().callTool({
-                    name: "atlas-streams-teardown",
-                    arguments: {
-                        projectId: getProjectId(),
-                        resource: "connection",
-                        workspaceName: getWorkspaceName(),
-                        resourceName: teardownConnName,
-                    },
-                });
-                const content = getResponseContent(response.content);
-                expect(response.isError, `Unexpected error: ${content}`).toBeFalsy();
-                expect(content).toContain("deletion initiated");
-            }, 30_000);
-        });
 
         describe("processor lifecycle", () => {
             const processorName = `testproc${randomId().slice(0, 8)}`;
@@ -310,21 +259,6 @@ describeWithStreams("atlas-streams workflows", (integration) => {
                 });
             });
 
-            describe("atlas-streams-teardown", () => {
-                it("deletes processor permanently", async () => {
-                    const response = await integration.mcpClient().callTool({
-                        name: "atlas-streams-teardown",
-                        arguments: {
-                            projectId: getProjectId(),
-                            resource: "processor",
-                            workspaceName: getWorkspaceName(),
-                            resourceName: processorName,
-                        },
-                    });
-                    const content = getResponseContent(response.content);
-                    expect(content).toContain("deleted");
-                }, 30_000);
-            });
         });
 
         describe("workspace lifecycle", () => {
@@ -385,19 +319,6 @@ describeWithStreams("atlas-streams workflows", (integration) => {
                 expect(content).toContain(lifecycleWsName);
             });
 
-            it("deletes workspace via teardown tool", async () => {
-                const response = await integration.mcpClient().callTool({
-                    name: "atlas-streams-teardown",
-                    arguments: {
-                        projectId: getProjectId(),
-                        resource: "workspace",
-                        workspaceName: lifecycleWsName,
-                    },
-                });
-                const content = getResponseContent(response.content);
-                expect(response.isError, `Unexpected error: ${content}`).toBeFalsy();
-                expect(content).toContain("deletion initiated");
-            }, 30_000);
         });
     });
 });

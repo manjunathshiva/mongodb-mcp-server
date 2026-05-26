@@ -259,59 +259,6 @@ describe("IndexCheck integration tests", () => {
                     });
                 });
 
-                describe("deleteMany operations", () => {
-                    beforeEach(async () => {
-                        // Insert test data for deleteMany operations
-                        await integration
-                            .mongoClient()
-                            .db(integration.randomDbName())
-                            .collection("delete-test-collection")
-                            .insertMany([
-                                { name: "document1", value: 1, category: "A" },
-                                { name: "document2", value: 2, category: "B" },
-                                { name: "document3", value: 3, category: "A" },
-                            ]);
-                    });
-
-                    it("should reject deleteMany queries that perform collection scans", async () => {
-                        const response = await integration.mcpClient().callTool({
-                            name: "delete-many",
-                            arguments: {
-                                database: integration.randomDbName(),
-                                collection: "delete-test-collection",
-                                filter: { value: { $lt: 2 } }, // No index on value
-                            },
-                        });
-
-                        const content = getResponseContent(response.content);
-                        expect(content).toContain("Index check failed");
-                        expect(content).toContain("deleteMany operation");
-                        expect(response.isError).toBe(true);
-                    });
-
-                    it("should allow deleteMany queries with indexes", async () => {
-                        // Create an index on the value field
-                        await integration
-                            .mongoClient()
-                            .db(integration.randomDbName())
-                            .collection("delete-test-collection")
-                            .createIndex({ value: 1 });
-
-                        const response = await integration.mcpClient().callTool({
-                            name: "delete-many",
-                            arguments: {
-                                database: integration.randomDbName(),
-                                collection: "delete-test-collection",
-                                filter: { value: { $lt: 2 } }, // Now has index
-                            },
-                        });
-
-                        expect(response.isError).toBeFalsy();
-                        const content = getResponseContent(response.content);
-                        expect(content).toContain("Deleted");
-                        expect(content).toMatch(/`\d+` document\(s\)/);
-                    });
-                });
             },
             {
                 getUserConfig: () => ({
@@ -410,21 +357,6 @@ describe("IndexCheck integration tests", () => {
                     expect(content).not.toContain("Index check failed");
                 });
 
-                it("should allow deleteMany operations without indexes", async () => {
-                    const response = await integration.mcpClient().callTool({
-                        name: "delete-many",
-                        arguments: {
-                            database: integration.randomDbName(),
-                            collection: "disabled-test-collection",
-                            filter: { value: { $lt: 2 } }, // No index, but should be allowed
-                        },
-                    });
-
-                    expect(response.isError).toBeFalsy();
-                    const content = getResponseContent(response.content);
-                    expect(content).toContain("Deleted");
-                    expect(content).not.toContain("Index check failed");
-                });
             },
             {
                 getUserConfig: () => ({

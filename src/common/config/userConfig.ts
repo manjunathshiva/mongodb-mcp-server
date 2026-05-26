@@ -81,12 +81,7 @@ const ServerConfigSchema = z.object({
         .default([
             "atlas-create-access-list",
             "atlas-create-db-user",
-            "drop-database",
-            "drop-collection",
-            "delete-many",
-            "drop-index",
             "atlas-streams-manage",
-            "atlas-streams-teardown",
         ])
         .describe(
             "An array of tool names that require user confirmation before execution. Requires the client to support elicitation."

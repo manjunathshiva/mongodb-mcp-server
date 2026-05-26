@@ -1,7 +1,10 @@
 import type { Mock } from "vitest";
 import { describe, it, expect, vi, beforeEach, type MockedFunction } from "vitest";
 import type { ZodRawShape } from "zod";
-import type { ToolConstructorParams } from "../../src/tools/tool.js";
+import type { ToolConstructorParams, OperationType, ToolCategory } from "../../src/tools/tool.js";
+import { ToolBase } from "../../src/tools/tool.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { TelemetryToolMetadata } from "../../src/telemetry/types.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import type { Session } from "../../src/common/session.js";
 import type { UserConfig } from "../../src/common/config/userConfig.js";
@@ -520,7 +523,7 @@ describe("ToolBase", () => {
                     v.labels.tool_name === "test-tool" &&
                     v.labels.category === "mongodb" &&
                     v.labels.status === "success" &&
-                    v.labels.operation_type === "delete"
+                    v.labels.operation_type === "update"
             );
             expect(count?.value).toBe(1);
 
@@ -530,7 +533,7 @@ describe("ToolBase", () => {
                     v.labels.tool_name === "test-tool" &&
                     v.labels.category === "mongodb" &&
                     v.labels.status === "success" &&
-                    v.labels.operation_type === "delete"
+                    v.labels.operation_type === "update"
             );
             expect(sum?.value).toBeGreaterThanOrEqual(0);
         });
@@ -576,3 +579,45 @@ function createToolWithoutStructuredContent(
     };
     return new TestToolWithoutStructuredContent(constructorParams);
 }
+
+describe("delete-operation policy", () => {
+    it("ToolBase.register() throws when operationType is 'delete'", () => {
+        class ForbiddenDeleteTool extends ToolBase {
+            static toolName = "forbidden-delete";
+            static category: ToolCategory = "mongodb";
+            static operationType: OperationType = "delete";
+            public description = "should never register";
+            public argsShape = {};
+            protected execute(): Promise<CallToolResult> {
+                return Promise.resolve({ content: [{ type: "text", text: "noop" }] });
+            }
+            protected resolveTelemetryMetadata(): TelemetryToolMetadata {
+                return {};
+            }
+        }
+
+        const tool = new ForbiddenDeleteTool({
+            name: ForbiddenDeleteTool.toolName,
+            category: ForbiddenDeleteTool.category,
+            operationType: ForbiddenDeleteTool.operationType,
+            session: { logger: { warning: vi.fn() } } as unknown as Session,
+            config: { confirmationRequiredTools: [], previewFeatures: [], disabledTools: [] } as unknown as UserConfig,
+            telemetry: { isTelemetryEnabled: () => false, emitEvents: vi.fn() } as unknown as Telemetry,
+            elicitation: { requestConfirmation: vi.fn() } as unknown as Elicitation,
+            uiRegistry: new UIRegistry(),
+            metrics: new MockMetrics(),
+        });
+
+        const mockServer = {
+            mcpServer: { registerTool: vi.fn() },
+        } as unknown as Server;
+
+        expect(() => tool.register(mockServer)).toThrow(/disallowed by policy/i);
+    });
+
+    it("AllTools registry contains no tools with operationType='delete'", async () => {
+        const { AllTools } = await import("../../src/tools/index.js");
+        const deleteTools = AllTools.filter((t) => t.operationType === "delete");
+        expect(deleteTools).toEqual([]);
+    });
+});

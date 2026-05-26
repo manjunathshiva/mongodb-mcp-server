@@ -690,6 +690,16 @@ export abstract class ToolBase<
     }
 
     public register(server: Server<TUserConfig, TContext, TMetrics>): boolean {
+        // Policy: destructive deletion is disallowed at the code level and cannot
+        // be re-enabled by configuration. Refuse to register any tool that
+        // declares operationType="delete", including custom embedder tools.
+        if (this.operationType === "delete") {
+            throw new Error(
+                `Tool '${this.name}' has operationType='delete', which is disallowed by policy. ` +
+                    `This server does not support destructive deletion operations.`
+            );
+        }
+
         if (!this.verifyAllowed()) {
             return false;
         }

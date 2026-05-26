@@ -17,13 +17,11 @@ describeWithAtlasLocal(
         let deploymentNamesToCleanup: string[] = [];
 
         afterEach(async () => {
-            // Clean up any deployments created during the test
+            // Cleanup via the underlying atlas-local client (MCP delete tool removed by policy).
+            const session = integration.mcpServer().session;
             for (const deploymentName of deploymentNamesToCleanup) {
                 try {
-                    await integration.mcpClient().callTool({
-                        name: "atlas-local-delete-deployment",
-                        arguments: { deploymentName },
-                    });
+                    await session.atlasLocalClient?.deleteDeployment(deploymentName);
                 } catch (error) {
                     console.warn(`Failed to delete deployment ${deploymentName}:`, error);
                 }

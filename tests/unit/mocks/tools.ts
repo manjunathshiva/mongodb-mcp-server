@@ -8,7 +8,7 @@ import type { TelemetryToolMetadata } from "../../../src/telemetry/types.js";
 export class TestTool extends ToolBase {
     static toolName = "test-tool";
     static category: ToolCategory = "mongodb";
-    static operationType: OperationType = "delete";
+    static operationType: OperationType = "update";
     public description = "A test tool for verification tests";
     public argsShape = {
         param1: z.string().describe("Test parameter 1"),

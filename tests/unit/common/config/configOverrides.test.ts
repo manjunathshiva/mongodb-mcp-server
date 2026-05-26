@@ -11,7 +11,7 @@ describe("configOverrides", () => {
         idleTimeoutMs: 600_000,
         notificationTimeoutMs: 540_000,
         disabledTools: ["tool1"],
-        confirmationRequiredTools: ["drop-database"],
+        confirmationRequiredTools: ["atlas-create-db-user"],
         connectionString: "mongodb://localhost:27017",
         previewFeatures: [],
         loggers: ["disk", "mcp"],
@@ -172,12 +172,12 @@ describe("configOverrides", () => {
                 const request: RequestContext = {
                     headers: {
                         "x-mongodb-mcp-disabled-tools": "tool2",
-                        "x-mongodb-mcp-confirmation-required-tools": "drop-collection",
+                        "x-mongodb-mcp-confirmation-required-tools": "atlas-create-access-list",
                     },
                 };
                 const result = applyConfigOverrides({ baseConfig: baseConfig as UserConfig, request });
                 expect(result.disabledTools).toEqual(["tool1", "tool2"]);
-                expect(result.confirmationRequiredTools).toEqual(["drop-database", "drop-collection"]);
+                expect(result.confirmationRequiredTools).toEqual(["atlas-create-db-user", "atlas-create-access-list"]);
                 // previewFeatures has enum validation - "feature1" isn't a valid value, so it gets rejected
                 expect(result.previewFeatures).toEqual([]);
             });
