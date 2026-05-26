@@ -5,6 +5,18 @@ export type ElicitedInputResult =
     | { accepted: true; fields: Record<string, string> }
     | { accepted: false; fields?: undefined };
 
+/**
+ * The outcome of a confirmation elicitation. `ok: true` means the user
+ * explicitly confirmed and the caller may proceed. Both `ok: false`
+ * reasons mean the caller must refuse the operation; they are kept
+ * distinct so the caller can produce a different, actionable error
+ * message for each (a user who said "no" sees a different message than
+ * a client that can't show a confirmation prompt at all).
+ */
+export type ConfirmationResult =
+    | { ok: true }
+    | { ok: false; reason: "declined" | "no-elicitation-support" };
+
 const ELICITATION_TIMEOUT_MS = 300_000; // 5 minutes for user interaction
 
 export class Elicitation {
@@ -24,12 +36,20 @@ export class Elicitation {
 
     /**
      * Requests a boolean confirmation from the user.
+     *
+     * Per OWASP MCP06 (intent-flow subversion) this method fails closed:
+     * if the connected client does not advertise the `elicitation`
+     * capability there is no way to obtain explicit consent, so the
+     * caller MUST refuse to proceed. The previous behaviour silently
+     * returned true in that case, which would let a confirmation-gated
+     * tool execute without any user prompt against clients that don't
+     * support elicitation.
+     *
      * @param message - The message to display to the user.
-     * @returns True if the user confirms the action or the client does not support elicitation, false otherwise.
      */
-    public async requestConfirmation(message: string): Promise<boolean> {
+    public async requestConfirmation(message: string): Promise<ConfirmationResult> {
         if (!this.supportsElicitation()) {
-            return true;
+            return { ok: false, reason: "no-elicitation-support" };
         }
 
         const result = await this.server.elicitInput(
@@ -40,7 +60,10 @@ export class Elicitation {
             },
             { timeout: ELICITATION_TIMEOUT_MS }
         );
-        return result.action === "accept" && result.content?.confirmation === "Yes";
+        if (result.action === "accept" && result.content?.confirmation === "Yes") {
+            return { ok: true };
+        }
+        return { ok: false, reason: "declined" };
     }
 
     /**
