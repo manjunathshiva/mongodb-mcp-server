@@ -10,7 +10,6 @@ import { AI_TOOL_REGISTRY, openConfigSettings, TOOLS_WITHOUT_EDITORS } from "./a
 import type { Platform } from "./setupAiToolsUtils.js";
 import { formatError, getPlatform } from "./setupAiToolsUtils.js";
 import { packageInfo } from "../common/packageInfo.js";
-import { getAuthType } from "../common/connectionInfo.js";
 import { type UserConfig } from "../common/config/userConfig.js";
 import { defaultCreateAtlasLocalClient } from "../common/atlasLocal.js";
 import { NullLogger } from "../common/logging/index.js";
@@ -227,27 +226,11 @@ const promptForConnectionString = async (
 
     registerGlobalSecretToRedact(connectionString, "mongodb uri");
 
-    try {
-        const auth = getAuthType(config, connectionString);
-        if (auth === "scram") {
-            const shouldTest = await confirm({ message: "Test your connection string?", default: true });
-
-            if (shouldTest) {
-                const outcome = await testConnectionString(connectionString);
-                return {
-                    connectionString: outcome.connectionString,
-                    provided: true,
-                    tested: true,
-                    attempts: outcome.attempts,
-                    testResult: outcome.testResult,
-                };
-            }
-        }
-        return { connectionString, provided: true, tested: false, attempts: 0 };
-    } catch {
-        // If auth type detection failed but user provided a connection string, preserve it
-        return { connectionString, provided: true, tested: false, attempts: 0 };
-    }
+    // X.509-only policy: the setup CLI no longer offers to test SCRAM
+    // connection strings because user/password auth is not supported.
+    // Connection-string testing is skipped; the user can verify the cert
+    // and connectivity by running the server itself.
+    return { connectionString, provided: true, tested: false, attempts: 0 };
 };
 
 const promptForServiceAccountId = async (): Promise<string> => {

@@ -47,6 +47,8 @@ import { systemCA } from "@mongodb-js/devtools-proxy-support";
 import { Keychain } from "./common/keychain.js";
 import { DryRunModeRunner } from "./transports/dryModeRunner.js";
 import { runSetup } from "./setup/setupMcpServer.js";
+import { assertX509ConnectionString } from "./common/config/validateMongoAuth.js";
+import { MongoDBError } from "./common/errors.js";
 
 async function main(): Promise<void> {
     systemCA().catch(() => undefined); // load system CA asynchronously as in mongosh
@@ -87,6 +89,24 @@ async function main(): Promise<void> {
 
     if (isSetupRequested) {
         await runSetup(config);
+    }
+
+    // Policy: connection strings must use X.509 client-certificate auth.
+    // The check only applies when a connection string is configured; pure
+    // Atlas-API deployments without MDB_MCP_CONNECTION_STRING are exempt.
+    if (config.connectionString) {
+        try {
+            assertX509ConnectionString(config.connectionString);
+        } catch (authError) {
+            if (authError instanceof MongoDBError) {
+                console.error(`Error: ${authError.message}`);
+                console.error(
+                    "- Refer to https://www.mongodb.com/docs/mcp-server/get-started/ for setting up the MCP Server."
+                );
+                process.exit(1);
+            }
+            throw authError;
+        }
     }
 
     if (config.dryRun) {

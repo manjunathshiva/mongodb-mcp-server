@@ -69,7 +69,6 @@ export class ConnectClusterTool extends AtlasToolBase {
         }
 
         switch (currentConectionState.tag) {
-            case "connecting":
             case "disconnected": // we might still be calling Atlas APIs and not attempted yet to connect to MongoDB, but we are still "connecting"
                 return "connecting";
             case "connected":

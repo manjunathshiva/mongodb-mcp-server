@@ -45,7 +45,7 @@ import { z } from 'zod';
 import type { ZodRawShape } from 'zod';
 
 // @public (undocumented)
-export type AnyConnectionState = ConnectionStateConnected | ConnectionStateConnecting | ConnectionStateDisconnected | ConnectionStateErrored;
+export type AnyConnectionState = ConnectionStateConnected | ConnectionStateDisconnected | ConnectionStateErrored;
 
 // @public (undocumented)
 export type AnyToolBase = ToolBase<any, any, any>;
@@ -363,20 +363,6 @@ export class ConnectionStateConnected implements ConnectionState {
 }
 
 // @public (undocumented)
-export interface ConnectionStateConnecting extends ConnectionState {
-    // (undocumented)
-    oidcConnectionType: OIDCConnectionAuthType;
-    // (undocumented)
-    oidcLoginUrl?: string;
-    // (undocumented)
-    oidcUserCode?: string;
-    // (undocumented)
-    serviceProvider: Promise<NodeDriverServiceProvider>;
-    // (undocumented)
-    tag: "connecting";
-}
-
-// @public (undocumented)
 export interface ConnectionStateDisconnected extends ConnectionState {
     // (undocumented)
     tag: "disconnected";
@@ -391,7 +377,7 @@ export interface ConnectionStateErrored extends ConnectionState {
 }
 
 // @public (undocumented)
-export type ConnectionTag = "connected" | "connecting" | "disconnected" | "errored";
+export type ConnectionTag = "connected" | "disconnected" | "errored";
 
 // @public (undocumented)
 export class ConsoleLogger extends LoggerBase {
@@ -784,9 +770,6 @@ export class NullLogger extends LoggerBase {
     // (undocumented)
     protected type?: LoggerType;
 }
-
-// @public (undocumented)
-export type OIDCConnectionAuthType = "oidc-auth-flow" | "oidc-device-flow";
 
 // @public @deprecated (undocumented)
 export function parseArgsWithCliOptions(cliArguments: string[]): {

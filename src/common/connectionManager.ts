@@ -21,8 +21,7 @@ export interface ConnectionSettings extends Omit<ConnectionInfo, "driverOptions"
     atlas?: AtlasClusterConnectionInfo;
 }
 
-export type ConnectionTag = "connected" | "connecting" | "disconnected" | "errored";
-export type OIDCConnectionAuthType = "oidc-auth-flow" | "oidc-device-flow";
+export type ConnectionTag = "connected" | "disconnected" | "errored";
 
 export interface ConnectionState {
     tag: ConnectionTag;
@@ -45,7 +44,6 @@ export const defaultDriverOptions: ConnectionInfo["driverOptions"] = {
     },
     timeoutMS: 30_000,
     proxy: { useEnvironmentVariableProxies: true },
-    applyProxyToOIDC: true,
 };
 
 export class ConnectionStateConnected implements ConnectionState {
@@ -160,14 +158,6 @@ export class ConnectionStateConnected implements ConnectionState {
     }
 }
 
-export interface ConnectionStateConnecting extends ConnectionState {
-    tag: "connecting";
-    serviceProvider: Promise<NodeDriverServiceProvider>;
-    oidcConnectionType: OIDCConnectionAuthType;
-    oidcLoginUrl?: string;
-    oidcUserCode?: string;
-}
-
 export interface ConnectionStateDisconnected extends ConnectionState {
     tag: "disconnected";
 }
@@ -177,11 +167,7 @@ export interface ConnectionStateErrored extends ConnectionState {
     errorReason: string;
 }
 
-export type AnyConnectionState =
-    | ConnectionStateConnected
-    | ConnectionStateConnecting
-    | ConnectionStateDisconnected
-    | ConnectionStateErrored;
+export type AnyConnectionState = ConnectionStateConnected | ConnectionStateDisconnected | ConnectionStateErrored;
 
 export interface ConnectionManagerEvents {
     "connection-request": [AnyConnectionState];
@@ -235,14 +221,13 @@ export abstract class ConnectionManager {
  * Establishes and tears down MongoDB connections via mongosh's
  * NodeDriverServiceProvider, applying MCP-specific defaults such as the
  * `appName` (composed from package info, device id and client name) and driver
- * options (read/write concerns, proxy and OIDC settings).
+ * options (read/write concerns, proxy settings).
  *
  * Tracks connection lifecycle as an {@link AnyConnectionState} and emits
  * `connection-request`, `connection-success`, `connection-error`,
  * `connection-close` and `close` events on {@link ConnectionManager.events}.
- * For OIDC connection strings it stays in the `connecting` state until the OIDC
- * plugin reports auth success or failure (via the shared event bus), surfacing
- * device-flow verification URL and user code when applicable.
+ * Connections complete synchronously because this server only accepts X.509
+ * client-certificate auth (no OIDC device-flow round-trip).
  */
 export class MCPConnectionManager extends ConnectionManager {
     private deviceId: DeviceId;
@@ -251,12 +236,11 @@ export class MCPConnectionManager extends ConnectionManager {
     /**
      * @param userConfig - Active user configuration; used when classifying the
      * connection string (e.g. Atlas vs. local).
-     * @param logger - Logger used for OIDC and disconnect diagnostics.
+     * @param logger - Logger used for disconnect diagnostics.
      * @param deviceId - Provider of the stable device identifier embedded in
      * the connection's `appName`.
-     * @param bus - Optional event emitter shared with the OIDC plugin to
-     * receive `mongodb-oidc-plugin:auth-*` notifications. A fresh emitter is
-     * created when omitted.
+     * @param bus - Optional event emitter for driver lifecycle notifications.
+     * A fresh emitter is created when omitted.
      */
     constructor(
         private userConfig: UserConfig,
@@ -266,9 +250,6 @@ export class MCPConnectionManager extends ConnectionManager {
     ) {
         super();
         this.bus = bus ?? new EventEmitter();
-        this.bus.on("mongodb-oidc-plugin:auth-failed", this.onOidcAuthFailed.bind(this));
-        // eslint-disable-next-line @typescript-eslint/no-misused-promises
-        this.bus.on("mongodb-oidc-plugin:auth-succeeded", this.onOidcAuthSucceeded.bind(this));
         this.deviceId = deviceId;
     }
 
@@ -276,22 +257,20 @@ export class MCPConnectionManager extends ConnectionManager {
      * Opens a new MongoDB connection from the supplied {@link ConnectionSettings},
      * disconnecting any prior connection first.
      *
-     * Resolves to a `connected` state for non-OIDC auth and to a `connecting`
-     * state for OIDC flows (which transition to `connected` once the OIDC
-     * plugin reports success on the shared event bus). On failure, transitions
-     * to an `errored` state and throws a {@link MongoDBError} with either
+     * Resolves to a `connected` state on success. On failure, transitions to
+     * an `errored` state and throws a {@link MongoDBError} with either
      * {@link ErrorCodes.MisconfiguredConnectionString} or
      * {@link ErrorCodes.NotConnectedToMongoDB}.
      */
     override async connect(settings: ConnectionSettings): Promise<AnyConnectionState> {
         this._events.emit("connection-request", this.currentConnectionState);
 
-        if (this.currentConnectionState.tag === "connected" || this.currentConnectionState.tag === "connecting") {
+        if (this.currentConnectionState.tag === "connected") {
             await this.disconnect();
         }
 
         let serviceProvider: Promise<NodeDriverServiceProvider>;
-        let connectionStringInfo: ConnectionStringInfo = { authType: "scram", hostType: "unknown" };
+        let connectionStringInfo: ConnectionStringInfo = { authType: "x.509", hostType: "unknown" };
 
         try {
             settings = { ...settings };
@@ -316,19 +295,9 @@ export class MCPConnectionManager extends ConnectionManager {
                       connectionSpecifier: settings.connectionString,
                   });
 
-            if (connectionInfo.driverOptions.oidc) {
-                connectionInfo.driverOptions.oidc.allowedFlows ??= ["auth-code"];
-                connectionInfo.driverOptions.oidc.notifyDeviceFlow ??= this.onOidcNotifyDeviceFlow.bind(this);
-            }
-
             connectionInfo.driverOptions.proxy ??= { useEnvironmentVariableProxies: true };
-            connectionInfo.driverOptions.applyProxyToOIDC ??= true;
 
-            connectionStringInfo = getConnectionStringInfo(
-                connectionInfo.connectionString,
-                this.userConfig,
-                settings.atlas
-            );
+            connectionStringInfo = getConnectionStringInfo(connectionInfo.connectionString, settings.atlas);
 
             serviceProvider = NodeDriverServiceProvider.connect(
                 connectionInfo.connectionString,
@@ -352,16 +321,6 @@ export class MCPConnectionManager extends ConnectionManager {
         }
 
         try {
-            if (connectionStringInfo.authType.startsWith("oidc")) {
-                return this.changeState("connection-request", {
-                    tag: "connecting",
-                    serviceProvider,
-                    connectedAtlasCluster: settings.atlas,
-                    connectionStringInfo,
-                    oidcConnectionType: connectionStringInfo.authType as OIDCConnectionAuthType,
-                });
-            }
-
             return this.changeState(
                 "connection-success",
                 new ConnectionStateConnected(await serviceProvider, connectionStringInfo, settings.atlas)
@@ -379,8 +338,7 @@ export class MCPConnectionManager extends ConnectionManager {
     }
 
     /**
-     * Closes the underlying NodeDriverServiceProvider (awaiting it first when
-     * the manager is still in the `connecting` state) and emits
+     * Closes the underlying NodeDriverServiceProvider and emits
      * `connection-close`. No-op when already `disconnected` or `errored`, in
      * which case the current state is returned as-is.
      */
@@ -389,15 +347,9 @@ export class MCPConnectionManager extends ConnectionManager {
             return this.currentConnectionState;
         }
 
-        if (this.currentConnectionState.tag === "connected" || this.currentConnectionState.tag === "connecting") {
+        if (this.currentConnectionState.tag === "connected") {
             try {
-                if (this.currentConnectionState.tag === "connected") {
-                    await this.currentConnectionState.serviceProvider?.close();
-                }
-                if (this.currentConnectionState.tag === "connecting") {
-                    const serviceProvider = await this.currentConnectionState.serviceProvider;
-                    await serviceProvider.close();
-                }
+                await this.currentConnectionState.serviceProvider?.close();
             } finally {
                 this.changeState("connection-close", {
                     tag: "disconnected",
@@ -428,74 +380,6 @@ export class MCPConnectionManager extends ConnectionManager {
         }
     }
 
-    private onOidcAuthFailed(error: unknown): void {
-        if (
-            this.currentConnectionState.tag === "connecting" &&
-            this.currentConnectionState.connectionStringInfo?.authType?.startsWith("oidc")
-        ) {
-            void this.disconnectOnOidcError(error);
-        }
-    }
-
-    private async onOidcAuthSucceeded(): Promise<void> {
-        if (
-            this.currentConnectionState.tag === "connecting" &&
-            this.currentConnectionState.connectionStringInfo?.authType?.startsWith("oidc")
-        ) {
-            this.changeState(
-                "connection-success",
-                new ConnectionStateConnected(
-                    await this.currentConnectionState.serviceProvider,
-                    this.currentConnectionState.connectionStringInfo,
-                    this.currentConnectionState.connectedAtlasCluster
-                )
-            );
-        }
-
-        this.logger.info({
-            id: LogId.oidcFlow,
-            context: "mongodb-oidc-plugin:auth-succeeded",
-            message: "Authenticated successfully.",
-        });
-    }
-
-    private onOidcNotifyDeviceFlow(flowInfo: { verificationUrl: string; userCode: string }): void {
-        if (
-            this.currentConnectionState.tag === "connecting" &&
-            this.currentConnectionState.connectionStringInfo?.authType?.startsWith("oidc")
-        ) {
-            this.changeState("connection-request", {
-                ...this.currentConnectionState,
-                tag: "connecting",
-                connectionStringInfo: {
-                    ...this.currentConnectionState.connectionStringInfo,
-                    authType: "oidc-device-flow",
-                },
-                oidcLoginUrl: flowInfo.verificationUrl,
-                oidcUserCode: flowInfo.userCode,
-            });
-        }
-
-        this.logger.info({
-            id: LogId.oidcFlow,
-            context: "mongodb-oidc-plugin:notify-device-flow",
-            message: "OIDC Flow changed automatically to device flow.",
-        });
-    }
-
-    private async disconnectOnOidcError(error: unknown): Promise<void> {
-        try {
-            await this.disconnect();
-        } catch (error: unknown) {
-            this.logger.warning({
-                id: LogId.oidcFlow,
-                context: "disconnectOnOidcError",
-                message: String(error),
-            });
-        } finally {
-            this.changeState("connection-error", { tag: "errored", errorReason: String(error) });
-        }
-    }
 }
 
 /**

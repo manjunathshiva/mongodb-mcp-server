@@ -37,7 +37,6 @@ export type {
 } from "./common/connectionErrorHandler.js";
 export { Elicitation, type ElicitedInputResult } from "./elicitation.js";
 export type {
-    ConnectionStateConnecting,
     ConnectionSettings,
     ConnectionManagerFactoryFn,
     AtlasClusterConnectionInfo,
@@ -47,7 +46,6 @@ export type {
     ConnectionStateErrored,
     ConnectionManagerEvents,
     ConnectionState,
-    OIDCConnectionAuthType,
     ConnectionTag,
 } from "./common/connectionManager.js";
 export { ConnectionManager, ConnectionStateConnected } from "./common/connectionManager.js";
@@ -87,9 +85,5 @@ export { EventCache } from "./telemetry/eventCache.js";
 export { ErrorCodes, MongoDBError } from "./common/errors.js";
 export { getRandomUUID } from "./helpers/getRandomUUID.js";
 export type { AuthProvider, Credentials } from "./common/atlas/auth/authProvider.js";
-export type {
-    ConnectionStringAuthType,
-    ConnectionStringHostType,
-    OIDCConnectionAuthType as ConnectionInfoOIDCConnectionAuthType,
-} from "./common/connectionInfo.js";
+export type { ConnectionStringAuthType, ConnectionStringHostType } from "./common/connectionInfo.js";
 export type { PreviewFeature, previewFeatureValues } from "./common/schemas.js";

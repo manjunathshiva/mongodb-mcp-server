@@ -44,19 +44,12 @@ export const connectionErrorHandler: ConnectionErrorHandler = (error, { availabl
     const connectToolsNames = connectTools?.map((t) => `"${t.name}"`).join(", ");
     const additionalPromptForConnectivity: { type: "text"; text: string }[] = [];
 
-    if (connectionState.tag === "connecting" && connectionState.oidcConnectionType) {
-        additionalPromptForConnectivity.push({
-            type: "text",
-            text: `The user needs to finish their OIDC connection by opening '${connectionState.oidcLoginUrl}' in the browser and use the following user code: '${connectionState.oidcUserCode}'`,
-        });
-    } else {
-        additionalPromptForConnectivity.push({
-            type: "text",
-            text: connectToolsNames
-                ? `Please use one of the following tools: ${connectToolsNames} to connect to a MongoDB instance or update the MCP server configuration to include a connection string. ${llmConnectHint}`
-                : "There are no tools available to connect. Please update the configuration to include a connection string and restart the server.",
-        });
-    }
+    additionalPromptForConnectivity.push({
+        type: "text",
+        text: connectToolsNames
+            ? `Please use one of the following tools: ${connectToolsNames} to connect to a MongoDB instance or update the MCP server configuration to include a connection string. ${llmConnectHint}`
+            : "There are no tools available to connect. Please update the configuration to include a connection string and restart the server.",
+    });
 
     switch (error.code) {
         case ErrorCodes.NotConnectedToMongoDB:

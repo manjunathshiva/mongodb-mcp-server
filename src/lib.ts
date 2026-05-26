@@ -65,15 +65,15 @@ export {
     ConnectionStateConnected,
     type AnyConnectionState,
     type ConnectionState,
-    type ConnectionStateConnecting,
     type ConnectionStateDisconnected,
     type ConnectionStateErrored,
     type ConnectionManagerFactoryFn,
     type ConnectionSettings,
     type ConnectionManagerEvents,
     type ConnectionTag,
-    type OIDCConnectionAuthType,
 } from "./common/connectionManager.js";
+// NOTE: ConnectionStateConnecting was removed when MongoDB-OIDC support was
+// dropped in favour of X.509-only auth.
 export {
     connectionErrorHandler,
     type ConnectionErrorHandler,

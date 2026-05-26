@@ -1,6 +1,4 @@
 import type { ConnectionManagerEvents, ConnectionStateConnected } from "../../../src/common/connectionManager.js";
-import { getAuthType, type ConnectionStringAuthType } from "../../../src/common/connectionInfo.js";
-import type { UserConfig } from "../../../src/common/config/userConfig.js";
 import { describeWithMongoDB, waitUntilSearchIsReady } from "../tools/mongodb/mongodbHelpers.js";
 import { MongoServerError } from "mongodb";
 import { describe, beforeEach, expect, it, vi, afterEach } from "vitest";
@@ -456,56 +454,9 @@ describeWithMongoDB(
     }
 );
 
-describe("Connection Manager connection type inference", () => {
-    const testCases = [
-        { userConfig: {}, connectionString: "mongodb://localhost:27017", connectionType: "scram" },
-        {
-            userConfig: {},
-            connectionString: "mongodb://localhost:27017?authMechanism=MONGODB-X509",
-            connectionType: "x.509",
-        },
-        {
-            userConfig: {},
-            connectionString: "mongodb://localhost:27017?authMechanism=GSSAPI",
-            connectionType: "kerberos",
-        },
-        {
-            userConfig: {},
-            connectionString: "mongodb://localhost:27017?authMechanism=PLAIN&authSource=$external",
-            connectionType: "ldap",
-        },
-        { userConfig: {}, connectionString: "mongodb://localhost:27017?authMechanism=PLAIN", connectionType: "scram" },
-        {
-            userConfig: { transport: "stdio", browser: "firefox" },
-            connectionString: "mongodb://localhost:27017?authMechanism=MONGODB-OIDC",
-            connectionType: "oidc-auth-flow",
-        },
-        {
-            userConfig: { transport: "http", httpHost: "127.0.0.1", browser: "ie6" },
-            connectionString: "mongodb://localhost:27017?authMechanism=MONGODB-OIDC",
-            connectionType: "oidc-auth-flow",
-        },
-        {
-            userConfig: { transport: "http", httpHost: "0.0.0.0", browser: "ie6" },
-            connectionString: "mongodb://localhost:27017?authMechanism=MONGODB-OIDC",
-            connectionType: "oidc-device-flow",
-        },
-        {
-            userConfig: { transport: "stdio" },
-            connectionString: "mongodb://localhost:27017?authMechanism=MONGODB-OIDC",
-            connectionType: "oidc-device-flow",
-        },
-    ] as {
-        userConfig: Partial<UserConfig>;
-        connectionString: string;
-        connectionType: ConnectionStringAuthType;
-    }[];
-
-    for (const { userConfig, connectionString, connectionType } of testCases) {
-        it(`infers ${connectionType} from ${connectionString}`, () => {
-            const actualConnectionType = getAuthType(userConfig as UserConfig, connectionString);
-
-            expect(actualConnectionType).toBe(connectionType);
-        });
-    }
-});
+// Note: the previous "Connection Manager connection type inference" suite was
+// removed when this server adopted X.509-only auth. getAuthType() no longer
+// exists; getConnectionStringInfo() unconditionally reports "x.509" because
+// non-X.509 mechanisms are rejected at config-parse time
+// (assertX509ConnectionString). The replacement coverage is in
+// tests/unit/common/validateMongoAuth.test.ts.

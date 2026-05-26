@@ -33,7 +33,7 @@ import { z } from 'zod';
 import type { ZodRawShape } from 'zod';
 
 // @public (undocumented)
-export type AnyConnectionState = ConnectionStateConnected | ConnectionStateConnecting | ConnectionStateDisconnected | ConnectionStateErrored;
+export type AnyConnectionState = ConnectionStateConnected | ConnectionStateDisconnected | ConnectionStateErrored;
 
 // @public (undocumented)
 export type AnyToolBase = ToolBase<any, any, any>;
@@ -316,9 +316,6 @@ export type ConnectionErrorUnhandled = {
 };
 
 // @public (undocumented)
-export type ConnectionInfoOIDCConnectionAuthType = "oidc-auth-flow" | "oidc-device-flow";
-
-// @public (undocumented)
 export abstract class ConnectionManager {
     constructor();
     // (undocumented)
@@ -407,20 +404,6 @@ export class ConnectionStateConnected implements ConnectionState {
 }
 
 // @public (undocumented)
-export interface ConnectionStateConnecting extends ConnectionState {
-    // (undocumented)
-    oidcConnectionType: OIDCConnectionAuthType;
-    // (undocumented)
-    oidcLoginUrl?: string;
-    // (undocumented)
-    oidcUserCode?: string;
-    // (undocumented)
-    serviceProvider: Promise<NodeDriverServiceProvider>;
-    // (undocumented)
-    tag: "connecting";
-}
-
-// @public (undocumented)
 export interface ConnectionStateDisconnected extends ConnectionState {
     // (undocumented)
     tag: "disconnected";
@@ -434,8 +417,8 @@ export interface ConnectionStateErrored extends ConnectionState {
     tag: "errored";
 }
 
-// @public (undocumented)
-export type ConnectionStringAuthType = "scram" | "ldap" | "kerberos" | ConnectionInfoOIDCConnectionAuthType | "x.509";
+// @public
+export type ConnectionStringAuthType = "x.509";
 
 // @public
 export type ConnectionStringHostType = "local" | "atlas" | "atlas_local" | "unknown";
@@ -449,7 +432,7 @@ export interface ConnectionStringInfo {
 }
 
 // @public (undocumented)
-export type ConnectionTag = "connected" | "connecting" | "disconnected" | "errored";
+export type ConnectionTag = "connected" | "disconnected" | "errored";
 
 export { createDefaultMetrics }
 
@@ -690,9 +673,6 @@ export class MongoDBError<ErrorCode extends ErrorCodes = ErrorCodes> extends Err
     // (undocumented)
     code: ErrorCode;
 }
-
-// @public (undocumented)
-export type OIDCConnectionAuthType = "oidc-auth-flow" | "oidc-device-flow";
 
 // @public
 export type OperationType = "metadata" | "read" | "create" | "delete" | "update" | "connect";

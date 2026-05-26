@@ -89,7 +89,7 @@ describe("debug resource", () => {
         debugResource.reduceApply("connection-error", {
             tag: "errored",
             connectionStringInfo: {
-                authType: "scram",
+                authType: "x.509",
                 hostType: "local",
             },
             errorReason: "Error message from the server",
@@ -98,7 +98,7 @@ describe("debug resource", () => {
         const output = await debugResource.toOutput();
 
         expect(output).toContain(`The user is not connected to a MongoDB cluster because of an error.`);
-        expect(output).toContain(`The inferred authentication mechanism is "scram".`);
+        expect(output).toContain(`The inferred authentication mechanism is "x.509".`);
         expect(output).toContain(`<error>Error message from the server</error>`);
     });
 
@@ -106,7 +106,7 @@ describe("debug resource", () => {
         debugResource.reduceApply("connection-error", {
             tag: "errored",
             connectionStringInfo: {
-                authType: "scram",
+                authType: "x.509",
                 hostType: "atlas",
             },
             errorReason: "Error message from the server",
@@ -125,7 +125,7 @@ describe("debug resource", () => {
         expect(output).toContain(
             `Attempted connecting to Atlas Cluster "My Test Cluster" in project with id "COFFEEFABADA".`
         );
-        expect(output).toContain(`The inferred authentication mechanism is "scram".`);
+        expect(output).toContain(`The inferred authentication mechanism is "x.509".`);
         expect(output).toContain(`<error>Error message from the server</error>`);
     });
 

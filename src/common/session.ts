@@ -20,6 +20,7 @@ import type { Keychain } from "./keychain.js";
 import { generateConnectionInfoFromCliArgs } from "@mongosh/arg-parser";
 import { type UserConfig } from "../common/config/userConfig.js";
 import { type ConnectionErrorHandler } from "./connectionErrorHandler.js";
+import { assertX509ConnectionString } from "./config/validateMongoAuth.js";
 
 export interface SessionOptions<TUserConfig extends UserConfig = UserConfig> {
     userConfig: TUserConfig;
@@ -146,6 +147,10 @@ export class Session extends EventEmitter<SessionEvents> {
     }
 
     async connectToMongoDB(settings: ConnectionSettings): Promise<void> {
+        // Policy: every MongoDB connection (config-time and runtime via the
+        // connect/switch-connection tools) must use X.509 client-certificate
+        // auth. Enforce here so there is no bypass path.
+        assertX509ConnectionString(settings.connectionString);
         await this.connectionManager.connect({ ...settings });
     }
 
