@@ -94,11 +94,28 @@ export const defaultTestSuiteConfig: TestSuiteConfig = {
     downloadOptions: DEFAULT_MONGODB_PROCESS_OPTIONS,
 };
 
-export function describeWithMongoDB(
+interface DescribeWithMongoDBFn {
+    (
+        name: string,
+        fn: (integration: MongoDBIntegrationTestCase) => void,
+        partialTestSuiteConfig?: Partial<TestSuiteConfig>
+    ): void;
+    /**
+     * Skip a describeWithMongoDB suite. Used while SCRAM-based fixtures are
+     * being rebuilt on top of X.509. Renders as a vitest `describe.skip`.
+     */
+    skip: (
+        name: string,
+        fn: (integration: MongoDBIntegrationTestCase) => void,
+        partialTestSuiteConfig?: Partial<TestSuiteConfig>
+    ) => void;
+}
+
+export const describeWithMongoDB: DescribeWithMongoDBFn = ((
     name: string,
     fn: (integration: MongoDBIntegrationTestCase) => void,
     partialTestSuiteConfig?: Partial<TestSuiteConfig>
-): void {
+): void => {
     const { getUserConfig, downloadOptions, getMockElicitationInput, getClientCapabilities } = {
         ...defaultTestSuiteConfig,
         ...partialTestSuiteConfig,
@@ -127,7 +144,13 @@ export function describeWithMongoDB(
             },
         });
     });
-}
+}) as DescribeWithMongoDBFn;
+
+describeWithMongoDB.skip = (name: string): void => {
+    describe.skip(name, () => {
+        // skipped — see comments at the call site
+    });
+};
 
 export function setupMongoDBIntegrationTest(
     configuration: MongoClusterConfiguration = DEFAULT_MONGODB_PROCESS_OPTIONS

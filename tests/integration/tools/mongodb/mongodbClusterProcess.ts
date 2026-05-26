@@ -6,6 +6,13 @@ import { MongoCluster } from "mongodb-runner";
 import { MongoClient } from "mongodb";
 import { ConnectionString } from "mongodb-connection-string-url";
 import { ShellWaitStrategy } from "testcontainers/build/wait-strategies/shell-wait-strategy.js";
+import {
+    X509_CA_CRT,
+    X509_CLIENT_PEM,
+    X509_CLIENT_SUBJECT,
+    toX509ConnectionString,
+    x509MongodArgs,
+} from "./x509Fixtures.js";
 
 export type MongoRunnerConfiguration = {
     runner: true;
@@ -19,6 +26,14 @@ export type MongoRunnerConfiguration = {
      * {@link MongoDBClusterProcess.connectionString}.
      */
     users?: MongoDBUserDoc[];
+    /**
+     * When false (default), the cluster is started with TLS + X.509 auth so
+     * the integration tests exercise the same auth posture as production
+     * (see assertX509ConnectionString). Set to true only when a test
+     * specifically needs a no-auth/no-TLS mongod (rare). Leaving this
+     * undefined behaves like false; use the explicit `true` to opt out.
+     */
+    disableX509?: boolean;
 };
 
 export type MongoSearchConfiguration = { search: true; image?: string };
@@ -101,7 +116,8 @@ export class MongoDBClusterProcess {
                 () => `mongodb://${mongodHost}:${mongodPort}/?directConnection=true`
             );
         } else if (MongoDBClusterProcess.isMongoRunnerOption(config)) {
-            const { downloadOptions, serverArgs, users } = config;
+            const { downloadOptions, serverArgs, users, disableX509 } = config;
+            const useX509 = !disableX509;
 
             // When users are requested we need to start mongod with --auth so
             // their roles are actually enforced. Only the very first user is
@@ -110,8 +126,10 @@ export class MongoDBClusterProcess {
             // authenticated client below, because the localhost exception is
             // automatically disabled once the first user exists.
             const hasUsers = users && users.length > 0;
+            const x509Args = useX509 ? x509MongodArgs() : [];
+            const baseArgs = [...serverArgs, ...x509Args];
             const effectiveServerArgs =
-                hasUsers && !serverArgs.includes("--auth") ? [...serverArgs, "--auth"] : serverArgs;
+                (hasUsers || useX509) && !baseArgs.includes("--auth") ? [...baseArgs, "--auth"] : baseArgs;
             const bootstrapUsers = hasUsers ? users.slice(0, 1) : undefined;
             const additionalUsers = hasUsers ? users.slice(1) : [];
 
@@ -120,6 +138,10 @@ export class MongoDBClusterProcess {
             let dbsDir = path.join(tmpDir, "mongodb-runner", "dbs");
             for (let i = 0; i < DOWNLOAD_RETRIES; i++) {
                 try {
+                    // mongodb-runner's tlsAddClientKey helper writes the
+                    // generated client/CA PEMs into tmpDir before mongod
+                    // boots, so the directory must exist up front.
+                    await fs.mkdir(dbsDir, { recursive: true });
                     const mongoCluster = await MongoCluster.start({
                         tmpDir: dbsDir,
                         logDir: path.join(tmpDir, "mongodb-runner", "logs"),
@@ -128,6 +150,12 @@ export class MongoDBClusterProcess {
                         downloadOptions,
                         args: effectiveServerArgs,
                         users: bootstrapUsers,
+                        // When TLS is required, mongodb-runner needs a way to
+                        // talk to mongod for its own internal probes. Setting
+                        // tlsAddClientKey lets it auto-generate a key trusted
+                        // by our CA file; we still create the X.509 user that
+                        // tests use ourselves below.
+                        tlsAddClientKey: useX509 ? true : undefined,
                     });
 
                     if (additionalUsers.length > 0) {
@@ -147,9 +175,32 @@ export class MongoDBClusterProcess {
                         }
                     }
 
+                    if (useX509) {
+                        // Bootstrap the X.509 user whose subject DN matches
+                        // the committed client certificate. After this call
+                        // the MongoDB localhost exception is gone, so any
+                        // subsequent connection MUST present a valid client
+                        // cert. mongodb-runner's withClient() uses its own
+                        // auto-generated cert (trusted by the CA file via
+                        // tlsAddClientKey above) so this command succeeds.
+                        await mongoCluster.withClient(async (client) => {
+                            await client.db("$external").command({
+                                createUser: X509_CLIENT_SUBJECT,
+                                roles: [
+                                    { role: "root", db: "admin" },
+                                    // Allow the test client to manage indexes / search etc.
+                                    { role: "__system", db: "admin" },
+                                ],
+                            });
+                        });
+                    }
+
+                    const baseConnString = mongoCluster.connectionString;
+                    const exposedConnString = useX509 ? toX509ConnectionString(baseConnString) : baseConnString;
+
                     return new MongoDBClusterProcess(
                         () => mongoCluster.close(),
-                        () => mongoCluster.connectionString
+                        () => exposedConnString
                     );
                 } catch (err) {
                     if (i < 5) {
