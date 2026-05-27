@@ -62,18 +62,18 @@ describe("Session", () => {
             name: string;
         }[] = [
             {
-                connectionString: "mongodb://localhost:27017",
+                connectionString: "mongodb://localhost:27017/?authMechanism=MONGODB-X509&authSource=$external&tls=true&tlsCertificateKeyFile=/test.pem",
                 expectAppName: true,
                 name: "db without appName",
             },
             {
-                connectionString: "mongodb://localhost:27017?appName=CustomAppName",
+                connectionString: "mongodb://localhost:27017/?authMechanism=MONGODB-X509&authSource=$external&tls=true&tlsCertificateKeyFile=/test.pem&appName=CustomAppName",
                 expectAppName: false,
                 name: "db with custom appName",
             },
             {
                 connectionString:
-                    "mongodb+srv://test.mongodb.net/test?retryWrites=true&w=majority&appName=CustomAppName",
+                    "mongodb+srv://test.mongodb.net/test?retryWrites=true&w=majority&appName=CustomAppName&authMechanism=MONGODB-X509&authSource=$external&tls=true&tlsCertificateKeyFile=/test.pem",
                 expectAppName: false,
                 name: "atlas db with custom appName",
             },
@@ -100,7 +100,7 @@ describe("Session", () => {
         }
 
         it("should configure the proxy to use environment variables", async () => {
-            await session.connectToMongoDB({ connectionString: "mongodb://localhost" });
+            await session.connectToMongoDB({ connectionString: "mongodb://localhost/?authMechanism=MONGODB-X509&authSource=$external&tls=true&tlsCertificateKeyFile=/test.pem" });
             expect(session.serviceProvider).toBeDefined();
 
             const connectMock = MockNodeDriverServiceProvider.connect;
@@ -108,13 +108,14 @@ describe("Session", () => {
 
             const connectionConfig = connectMock.mock.calls[0]?.[1];
             expect(connectionConfig?.proxy).toEqual({ useEnvironmentVariableProxies: true });
-            expect(connectionConfig?.applyProxyToOIDC).toEqual(true);
+            // applyProxyToOIDC removed in Phase B (OIDC connection-string auth
+            // is no longer supported now that mongod auth is X.509-only).
         });
 
         it("should include client name when agent runner is set", async () => {
             session.setMcpClient({ name: "test-client", version: "1.0.0" });
 
-            await session.connectToMongoDB({ connectionString: "mongodb://localhost:27017" });
+            await session.connectToMongoDB({ connectionString: "mongodb://localhost:27017/?authMechanism=MONGODB-X509&authSource=$external&tls=true&tlsCertificateKeyFile=/test.pem" });
             expect(session.serviceProvider).toBeDefined();
 
             const connectMock = MockNodeDriverServiceProvider.connect;
@@ -126,7 +127,7 @@ describe("Session", () => {
         });
 
         it("should use 'unknown' for client name when agent runner is not set", async () => {
-            await session.connectToMongoDB({ connectionString: "mongodb://localhost:27017" });
+            await session.connectToMongoDB({ connectionString: "mongodb://localhost:27017/?authMechanism=MONGODB-X509&authSource=$external&tls=true&tlsCertificateKeyFile=/test.pem" });
             expect(session.serviceProvider).toBeDefined();
 
             const connectMock = MockNodeDriverServiceProvider.connect;
@@ -166,7 +167,7 @@ describe("Session", () => {
             createSearchIndexesMock.mockResolvedValue([]);
 
             await session.connectToMongoDB({
-                connectionString: "mongodb://localhost:27017",
+                connectionString: "mongodb://localhost:27017/?authMechanism=MONGODB-X509&authSource=$external&tls=true&tlsCertificateKeyFile=/test.pem",
             });
 
             expect(await session.isSearchSupported()).toBeTruthy();
@@ -178,7 +179,7 @@ describe("Session", () => {
             );
 
             await session.connectToMongoDB({
-                connectionString: "mongodb://localhost:27017",
+                connectionString: "mongodb://localhost:27017/?authMechanism=MONGODB-X509&authSource=$external&tls=true&tlsCertificateKeyFile=/test.pem",
             });
             expect(await session.isSearchSupported()).toEqual(false);
         });
@@ -187,7 +188,7 @@ describe("Session", () => {
             getSearchIndexesMock.mockRejectedValue(new MongoServerError({ message: "not authorized on db", code: 13 }));
 
             await session.connectToMongoDB({
-                connectionString: "mongodb://localhost:27017",
+                connectionString: "mongodb://localhost:27017/?authMechanism=MONGODB-X509&authSource=$external&tls=true&tlsCertificateKeyFile=/test.pem",
             });
             expect(await session.isSearchSupported()).toEqual(true);
             expect(await session.isSearchSupported()).toEqual(true);
@@ -212,7 +213,7 @@ describe("Session", () => {
             getSearchIndexesMock.mockResolvedValue([]);
 
             await session.connectToMongoDB({
-                connectionString: "mongodb://localhost:27017",
+                connectionString: "mongodb://localhost:27017/?authMechanism=MONGODB-X509&authSource=$external&tls=true&tlsCertificateKeyFile=/test.pem",
             });
 
             await expect(session.assertSearchSupported()).resolves.not.toThrow();
@@ -224,7 +225,7 @@ describe("Session", () => {
             );
 
             await session.connectToMongoDB({
-                connectionString: "mongodb://localhost:27017",
+                connectionString: "mongodb://localhost:27017/?authMechanism=MONGODB-X509&authSource=$external&tls=true&tlsCertificateKeyFile=/test.pem",
             });
 
             await expect(session.assertSearchSupported()).rejects.toThrow(
