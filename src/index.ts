@@ -50,6 +50,16 @@ import { runSetup } from "./setup/setupMcpServer.js";
 import { assertX509ConnectionString } from "./common/config/validateMongoAuth.js";
 import { MongoDBError } from "./common/errors.js";
 
+/**
+ * File-local fallback for the catastrophic-error path at the bottom of
+ * this module. `main()` swaps it for the keychain returned by
+ * `parseUserConfig` once parsing succeeds, so any emergency log emitted
+ * after that point will redact the same secrets the rest of the server
+ * does. Scoped to this entry-point module on purpose - it is not the
+ * old process-wide `Keychain.root`.
+ */
+let bootstrapKeychain: Keychain = new Keychain();
+
 async function main(): Promise<void> {
     systemCA().catch(() => undefined); // load system CA asynchronously as in mongosh
 
@@ -64,9 +74,11 @@ async function main(): Promise<void> {
         error,
         warnings,
         parsed: config,
+        secrets,
     } = parseUserConfig({
         args: process.argv.slice(2),
     });
+    bootstrapKeychain = secrets;
 
     if (!config || (error && error.length)) {
         console.error(`${error}
@@ -117,9 +129,11 @@ async function main(): Promise<void> {
         config.transport === "stdio"
             ? new StdioRunner({
                   userConfig: config,
+                  keychain: secrets,
               })
             : new StreamableHttpRunner({
                   userConfig: config,
+                  keychain: secrets,
               });
     const shutdown = (): void => {
         transportRunner.logger.info({
@@ -184,7 +198,7 @@ main().catch((error: unknown) => {
     // At this point, we may be in a very broken state, so we can't rely on the logger
     // being functional. Instead, create a brand new ConsoleLogger and log the error
     // to the console.
-    const logger = new ConsoleLogger(Keychain.root);
+    const logger = new ConsoleLogger(bootstrapKeychain);
     logger.emergency({
         id: LogId.serverStartFailure,
         context: "server",

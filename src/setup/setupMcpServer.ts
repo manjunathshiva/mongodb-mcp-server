@@ -4,7 +4,6 @@ import { input, confirm, password } from "@inquirer/prompts";
 import path from "path";
 import chalk from "chalk";
 import semver from "semver";
-import { NodeDriverServiceProvider } from "@mongosh/service-provider-node-driver";
 import type { AIToolType } from "./aiTool.js";
 import { AI_TOOL_REGISTRY, openConfigSettings, TOOLS_WITHOUT_EDITORS } from "./aiTool.js";
 import type { Platform } from "./setupAiToolsUtils.js";
@@ -15,7 +14,7 @@ import { defaultCreateAtlasLocalClient } from "../common/atlasLocal.js";
 import { NullLogger } from "../common/logging/index.js";
 import type { TelemetryResult } from "../telemetry/types.js";
 import { SetupTelemetry } from "./setupTelemetry.js";
-import { Keychain, registerGlobalSecretToRedact } from "../common/keychain.js";
+import { Keychain } from "../common/keychain.js";
 import { promptAndInstallSkills, type SkillsInstallOutcome } from "./installSkills.js";
 
 const buildEnvObject = (
@@ -36,64 +35,20 @@ const buildEnvObject = (
     return env;
 };
 
-const testConnectionString = async (
-    connectionString: string
-): Promise<{
-    connectionString: string;
-    /** Final result of the connection attempt, or undefined if the user never tested. */
-    testResult?: TelemetryResult;
-    /** Number of connection attempts the user made (1 = initial attempt, 2+ = with retries). */
-    attempts: number;
-}> => {
-    let attempts = 0;
-    while (true) {
-        attempts += 1;
-        console.log("\nTesting connection...");
-        let serviceProvider: NodeDriverServiceProvider | undefined;
-
-        try {
-            serviceProvider = await NodeDriverServiceProvider.connect(connectionString, {
-                productDocsLink: "https://github.com/mongodb-js/mongodb-mcp-server/",
-                productName: "MongoDB MCP",
-                serverSelectionTimeoutMS: 10000,
-            });
-            await serviceProvider.runCommand("admin", { ping: 1 });
-            console.log(chalk.green("✓ Connection successful!"));
-            return { connectionString, testResult: "success", attempts };
-        } catch (error: unknown) {
-            console.log(chalk.red("\n✗ Connection failed: " + formatError(error)));
-            console.log(chalk.yellow("\nPlease check:"));
-            console.log(chalk.yellow("  • Your database user credentials are correct"));
-            console.log(chalk.yellow("  • Your IP address is allowed in Network Access"));
-            console.log(chalk.yellow("  • The cluster is running and accessible"));
-
-            const retry = await confirm({
-                message: "\nWould you like to enter a new connection string and try again?",
-                default: true,
-            });
-
-            if (retry) {
-                connectionString = await password({ message: "Enter your MongoDB connection string:", mask: true });
-            } else {
-                console.log(chalk.yellow("\nYou might be proceeding with a potentially invalid connection string."));
-                return { connectionString, testResult: "failure", attempts };
-            }
-        } finally {
-            try {
-                await serviceProvider?.close();
-            } catch {
-                // Ignore close errors
-            }
-        }
-    }
-};
+// testConnectionString was removed in Phase B: under the X.509-only
+// policy, the setup CLI no longer offers an interactive
+// "test your connection string" step. Users verify connectivity by
+// running the server directly with their cert. The function is gone
+// entirely instead of being kept as dead code, so future contributors
+// don't bring it back without re-deciding the policy.
 
 const configureEditor = async (
     tool: AIToolType,
     connectionString: string,
     serviceWorkerId: string,
     serviceWorkerSecret: string,
-    isReadOnly: boolean
+    isReadOnly: boolean,
+    keychain: Keychain
 ): Promise<{
     usedDefaultConfigPath: boolean;
     result: TelemetryResult;
@@ -124,7 +79,7 @@ const configureEditor = async (
         console.log(`\nConfiguration saved to ${configPath}`);
         return { usedDefaultConfigPath: useDetectedPath, result: "success" };
     } catch (error: unknown) {
-        console.log(chalk.red(`\nFailed to save configuration: ${formatError(error)}`));
+        console.log(chalk.red(`\nFailed to save configuration: ${formatError(error, keychain)}`));
         return { usedDefaultConfigPath: useDetectedPath, result: "failure", error };
     }
 };
@@ -206,7 +161,8 @@ const promptForReadonly = async (): Promise<boolean> => {
 };
 
 const promptForConnectionString = async (
-    config: UserConfig
+    config: UserConfig,
+    keychain: Keychain
 ): Promise<{
     connectionString: string;
     provided: boolean;
@@ -224,7 +180,7 @@ const promptForConnectionString = async (
         return { connectionString: "", provided: false, tested: false, attempts: 0 };
     }
 
-    registerGlobalSecretToRedact(connectionString, "mongodb uri");
+    keychain.register(connectionString, "mongodb uri");
 
     // X.509-only policy: the setup CLI no longer offers to test SCRAM
     // connection strings because user/password auth is not supported.
@@ -238,14 +194,14 @@ const promptForServiceAccountId = async (): Promise<string> => {
     return await input({ message: "Enter your Atlas Service Account Client ID (press enter to skip):" });
 };
 
-const promptForServiceAccountSecret = async (): Promise<string> => {
+const promptForServiceAccountSecret = async (keychain: Keychain): Promise<string> => {
     const secret = await password({
         message: "Enter your Atlas Service Account Secret (press enter to skip):",
         mask: true,
     });
 
     if (secret.trim()) {
-        registerGlobalSecretToRedact(secret, "private key");
+        keychain.register(secret, "private key");
     }
 
     return secret;
@@ -320,7 +276,8 @@ const getAvailablePrompts = (
 
 const promptToOpenConfigFile = async (
     displayName: string,
-    tool: AIToolType
+    tool: AIToolType,
+    keychain: Keychain
 ): Promise<{
     opened: boolean;
     result: TelemetryResult;
@@ -343,7 +300,7 @@ const promptToOpenConfigFile = async (
         await openConfigSettings(tool);
         return { opened: true, result: "success" };
     } catch (error: unknown) {
-        console.log(chalk.red(`Failed to open config file: ${formatError(error)}`));
+        console.log(chalk.red(`Failed to open config file: ${formatError(error, keychain)}`));
         return { opened: true, result: "failure", error };
     }
 };
@@ -391,7 +348,13 @@ class UnsupportedPlatformError extends Error {
  * rates and per-step drop-off.
  */
 export const runSetup = async (config: UserConfig): Promise<never> => {
-    const setupTelemetry = SetupTelemetry.create(config, Keychain.root);
+    // Setup CLI has its own keychain scope - no process-wide singleton.
+    // Secrets entered during the wizard (connection strings, Atlas
+    // service-account secrets) land here and feed both the telemetry
+    // redactor and the formatError helper for the duration of the
+    // wizard.
+    const setupKeychain = new Keychain();
+    const setupTelemetry = SetupTelemetry.create(config, setupKeychain);
 
     // Ensure hard cancellations (SIGINT/SIGTERM outside of an Inquirer prompt)
     // are still captured. Inquirer itself converts Ctrl+C during prompts into
@@ -442,7 +405,7 @@ export const runSetup = async (config: UserConfig): Promise<never> => {
         setupTelemetry.emitReadOnlySelected(isReadOnly);
         printNewLine();
 
-        const connectionOutcome = await promptForConnectionString(config);
+        const connectionOutcome = await promptForConnectionString(config, setupKeychain);
         setupTelemetry.emitConnectionStringEntered({
             provided: connectionOutcome.provided,
             tested: connectionOutcome.tested,
@@ -453,7 +416,7 @@ export const runSetup = async (config: UserConfig): Promise<never> => {
         const serviceAccountId = await promptForServiceAccountId();
         setupTelemetry.emitServiceAccountIdEntered(Boolean(serviceAccountId));
 
-        const serviceAccountSecret = await promptForServiceAccountSecret();
+        const serviceAccountSecret = await promptForServiceAccountSecret(setupKeychain);
         setupTelemetry.emitServiceAccountSecretEntered(Boolean(serviceAccountSecret));
         printNewLine();
 
@@ -465,7 +428,8 @@ export const runSetup = async (config: UserConfig): Promise<never> => {
             connectionOutcome.connectionString,
             serviceAccountId,
             serviceAccountSecret,
-            isReadOnly
+            isReadOnly,
+            setupKeychain
         );
         setupTelemetry.emitEditorConfigured(editorOutcome);
 
@@ -479,7 +443,7 @@ export const runSetup = async (config: UserConfig): Promise<never> => {
             hasDocker
         );
         guideUserWithSetupSuccess(displayName, availablePrompts, skillsResult);
-        const openOutcome = await promptToOpenConfigFile(displayName, tool);
+        const openOutcome = await promptToOpenConfigFile(displayName, tool, setupKeychain);
         setupTelemetry.emitOpenConfigPrompted(openOutcome);
 
         setupTelemetry.emitCompleted();

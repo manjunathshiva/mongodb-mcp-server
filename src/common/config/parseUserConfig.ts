@@ -41,7 +41,17 @@ export function parseUserConfig({
     warnings: string[];
     parsed: UserConfig | undefined;
     error: string | undefined;
+    /**
+     * Fresh keychain populated with every secret discovered in the parsed
+     * config (Atlas credentials, connection string, TLS file paths, etc.).
+     * The caller owns this keychain and is responsible for passing it
+     * into loggers / sessions so log redaction works. Always returned —
+     * empty when parsing failed — so callers can write a uniform branch.
+     */
+    secrets: Keychain;
 } {
+    const secrets = new Keychain();
+
     const schema = overrides
         ? z.object({
               ...UserConfigSchema.shape,
@@ -52,7 +62,7 @@ export function parseUserConfig({
     const { error: parseError, warnings, parsed } = parseUserConfigSources({ args, schema, parserOptions });
 
     if (parseError) {
-        return { error: parseError, warnings, parsed: undefined };
+        return { error: parseError, warnings, parsed: undefined, secrets };
     }
 
     if (parsed.nodb) {
@@ -60,6 +70,7 @@ export function parseUserConfig({
             error: "Error: The --nodb argument is not supported in the MCP Server. Please remove it from your configuration.",
             warnings,
             parsed: undefined,
+            secrets,
         };
     }
 
@@ -81,17 +92,19 @@ export function parseUserConfig({
             error: `Invalid configuration for the following fields:\n${error.issues.map((issue) => `${issue.path.join(".")} - ${issue.message}`).join("\n")}`,
             warnings,
             parsed: undefined,
+            secrets,
         };
     }
 
     // TODO: Separate correctly parsed user config from all other valid
     // arguments relevant to mongosh's args-parser.
     const userConfig: UserConfig = { ...parsed, ...configParseResult.data };
-    registerKnownSecretsInRootKeychain(userConfig);
+    registerKnownSecrets(secrets, userConfig);
     return {
         parsed: userConfig,
         warnings,
         error: undefined,
+        secrets,
     };
 }
 
@@ -154,9 +167,7 @@ function parseUserConfigSources<T extends typeof UserConfigSchema>({
     };
 }
 
-function registerKnownSecretsInRootKeychain(userConfig: Partial<UserConfig>): void {
-    const keychain = Keychain.root;
-
+function registerKnownSecrets(keychain: Keychain, userConfig: Partial<UserConfig>): void {
     const maybeRegister = (value: string | undefined, kind: Secret["kind"]): void => {
         if (value) {
             keychain.register(value, kind);

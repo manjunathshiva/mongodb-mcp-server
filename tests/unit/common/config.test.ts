@@ -62,22 +62,25 @@ describe("config", () => {
     });
 
     it("should generate defaults when no config sources are populated", () => {
-        expect(parseUserConfig({ args: [] })).toStrictEqual({
+        const { secrets, ...rest } = parseUserConfig({ args: [] });
+        expect(rest).toStrictEqual({
             parsed: expectedDefaults,
             warnings: [],
             error: undefined,
         });
+        // Phase E: parseUserConfig now returns its own keychain.
+        expect(secrets).toBeInstanceOf(Keychain);
+        expect(secrets.allSecrets).toEqual([]);
     });
 
     it("can override defaults in the schema and those are populated instead", () => {
-        expect(
-            parseUserConfig({
-                args: [],
-                overrides: {
-                    exportTimeoutMs: UserConfigSchema.shape.exportTimeoutMs.default(123),
-                },
-            })
-        ).toStrictEqual({
+        const { secrets, ...rest } = parseUserConfig({
+            args: [],
+            overrides: {
+                exportTimeoutMs: UserConfigSchema.shape.exportTimeoutMs.default(123),
+            },
+        });
+        expect(rest).toStrictEqual({
             parsed: {
                 ...expectedDefaults,
                 exportTimeoutMs: 123,
@@ -85,6 +88,7 @@ describe("config", () => {
             warnings: [],
             error: undefined,
         });
+        expect(secrets).toBeInstanceOf(Keychain);
     });
 
     describe("env var parsing", () => {
@@ -403,15 +407,17 @@ describe("config", () => {
             }
 
             it("cannot mix --httpHeaders and --httpHeaders.fieldX", () => {
-                expect(
-                    parseUserConfig({
-                        args: ["--httpHeaders", '{"fieldA": "3", "fieldB": "4"}', "--httpHeaders.fieldA", "5"],
-                    })
-                ).toStrictEqual({
+                const { secrets, ...rest } = parseUserConfig({
+                    args: ["--httpHeaders", '{"fieldA": "3", "fieldB": "4"}', "--httpHeaders.fieldA", "5"],
+                });
+                expect(rest).toStrictEqual({
                     error: "Invalid configuration for the following fields:\nhttpHeaders - Invalid input: expected object, received array",
                     warnings: [],
                     parsed: undefined,
                 });
+                // Phase E: an empty `secrets` keychain is returned even on
+                // failure so callers can uniformly destructure the result.
+                expect(secrets.allSecrets).toEqual([]);
             });
         });
 
@@ -879,21 +885,14 @@ describe("keychain management", () => {
         { cliArg: "tlsCertificateKeyFilePassword", secretKind: "password" },
         { cliArg: "username", secretKind: "user" },
     ] as TestCase[];
-    let keychain: Keychain;
-
-    beforeEach(() => {
-        keychain = Keychain.root;
-        keychain.clearAllSecrets();
-    });
-
-    afterEach(() => {
-        keychain.clearAllSecrets();
-    });
 
     for (const { cliArg, secretKind } of testCases) {
-        it(`should register ${cliArg} as a secret of kind ${secretKind} in the root keychain`, () => {
-            parseUserConfig({ args: [`--${cliArg}`, cliArg] });
-            expect(keychain.allSecrets).toEqual([{ value: cliArg, kind: secretKind }]);
+        it(`should register ${cliArg} as a secret of kind ${secretKind} in the returned keychain`, () => {
+            // Phase E: parseUserConfig now returns its own keychain rather
+            // than mutating a process-wide `Keychain.root`. Read the
+            // returned `secrets` keychain to verify registration.
+            const { secrets } = parseUserConfig({ args: [`--${cliArg}`, cliArg] });
+            expect(secrets.allSecrets).toEqual([{ value: cliArg, kind: secretKind }]);
         });
     }
 
@@ -903,10 +902,10 @@ describe("keychain management", () => {
     });
 
     for (const secretKey of secretsFromSchema) {
-        it(`should register ${secretKey} as a secret in the root keychain`, () => {
-            parseUserConfig({ args: [`--${secretKey}`, secretKey] });
+        it(`should register ${secretKey} as a secret in the returned keychain`, () => {
+            const { secrets } = parseUserConfig({ args: [`--${secretKey}`, secretKey] });
 
-            const registeredSecret = keychain.allSecrets.find((s) => s.value === secretKey);
+            const registeredSecret = secrets.allSecrets.find((s) => s.value === secretKey);
             expect(registeredSecret).toBeDefined();
         });
     }

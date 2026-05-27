@@ -29,7 +29,7 @@ describe("Logger", () => {
     beforeEach(() => {
         // Mock console.error before creating the ConsoleLogger
         consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-        keychain = Keychain.root;
+        keychain = new Keychain();
 
         consoleLogger = new ConsoleLogger(keychain);
 

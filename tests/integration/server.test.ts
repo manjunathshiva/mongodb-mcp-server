@@ -183,7 +183,7 @@ describe("Server integration test", () => {
             logger,
             exportsManager,
             connectionManager,
-            keychain: Keychain.root,
+            keychain: new Keychain(),
             connectionErrorHandler,
             atlasLocalClient: await defaultCreateAtlasLocalClient({ logger }),
             apiClient: defaultCreateApiClient(
@@ -261,7 +261,7 @@ describe("Server integration test", () => {
         });
 
         it("should warn when not using https for apiBaseUrl", async () => {
-            const logger = new InMemoryLogger(Keychain.root);
+            const logger = new InMemoryLogger(new Keychain());
             const config: UserConfig = {
                 ...defaultTestConfig,
                 apiBaseUrl: "http://localhost:8080",

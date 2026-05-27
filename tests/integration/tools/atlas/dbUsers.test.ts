@@ -58,11 +58,17 @@ describeWithAtlas("db users", (integration) => {
 
         describe("atlas-create-db-user", () => {
             beforeEach(() => {
-                Keychain.root.clearAllSecrets();
+                // Phase E: per-test keychain (no more process-wide root).
+                // clearAllSecrets() was only meaningful when secrets accumulated
+                // across tests via the shared root; per-test ownership makes
+                // the explicit clear unnecessary.
             });
 
             afterEach(() => {
-                Keychain.root.clearAllSecrets();
+                // Phase E: per-test keychain (no more process-wide root).
+                // clearAllSecrets() was only meaningful when secrets accumulated
+                // across tests via the shared root; per-test ownership makes
+                // the explicit clear unnecessary.
             });
 
             it("should have correct metadata", async () => {

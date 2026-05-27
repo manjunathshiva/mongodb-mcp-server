@@ -8,7 +8,7 @@ import type { LoggerBase } from "../common/logging/index.js";
 import { CompositeLogger, ConsoleLogger, DiskLogger, McpLogger } from "../common/logging/index.js";
 import { ExportsManager } from "../common/exportsManager.js";
 import { DeviceId } from "../helpers/deviceId.js";
-import { Keychain } from "../common/keychain.js";
+import { CompositeKeychain, Keychain } from "../common/keychain.js";
 import { defaultCreateConnectionManager, type ConnectionManagerFactoryFn } from "../common/connectionManager.js";
 import {
     type ConnectionErrorHandler,
@@ -110,6 +110,24 @@ export type TransportRunnerConfig<
      * `UserConfigSchema.parse({})`.
      */
     userConfig: TUserConfig;
+
+    /**
+     * Bootstrap keychain holding secrets discovered while parsing config
+     * (Atlas API client secret, connection-string credentials, TLS file
+     * paths, etc.). Used to redact bootstrap-time secrets from every
+     * log line emitted by this runner and its sessions.
+     *
+     * The keychain returned by `parseUserConfig({ ... }).secrets` is
+     * already populated with the canonical set; pass it through here.
+     * Each MCP session additionally builds its own per-session keychain
+     * for runtime secrets and composes it with this one for redaction.
+     *
+     * Optional for backwards compatibility — a fresh empty Keychain is
+     * created when omitted, in which case bootstrap secrets won't be
+     * redacted (only fine for tests / embedders with no config
+     * secrets).
+     */
+    keychain?: Keychain;
 
     /**
      * @deprecated Use `start({ sessionOptions: {connectionManager: MyCustomConnectionManager} })` instead
@@ -223,8 +241,16 @@ export abstract class TransportRunnerBase<
     /** @deprecated This method will be removed in a future version. Extend `StreamableHttpRunner` and override `createServerForRequest` instead. */
     protected readonly createApiClient: ApiClientFactoryFn;
 
+    /**
+     * Bootstrap keychain shared across this runner and every session it
+     * creates. Holds secrets discovered at config-parse time so they get
+     * redacted from logs even before any session exists.
+     */
+    protected readonly keychain: Keychain;
+
     protected constructor({
         userConfig,
+        keychain,
         createConnectionManager = defaultCreateConnectionManager,
         connectionErrorHandler = defaultConnectionErrorHandler,
         createAtlasLocalClient = defaultCreateAtlasLocalClient,
@@ -236,6 +262,7 @@ export abstract class TransportRunnerBase<
         createApiClient = defaultCreateApiClient,
     }: TransportRunnerConfig<TUserConfig, TMetrics>) {
         this.userConfig = userConfig;
+        this.keychain = keychain ?? new Keychain();
         this.createConnectionManager = createConnectionManager;
         this.connectionErrorHandler = connectionErrorHandler;
         this.createAtlasLocalClient = createAtlasLocalClient;
@@ -246,7 +273,7 @@ export abstract class TransportRunnerBase<
         this.metrics = metrics ?? new PrometheusMetrics({ definitions: createDefaultMetrics() as TMetrics });
         const loggers: LoggerBase[] = [...additionalLoggers];
         if (this.userConfig.loggers.includes("stderr")) {
-            loggers.push(new ConsoleLogger(Keychain.root));
+            loggers.push(new ConsoleLogger(this.keychain));
         }
 
         if (this.userConfig.loggers.includes("disk")) {
@@ -259,7 +286,7 @@ export abstract class TransportRunnerBase<
                         console.error("Error initializing disk logger:", err);
                         process.exit(1);
                     },
-                    Keychain.root
+                    this.keychain
                 )
             );
         }
@@ -315,6 +342,16 @@ export abstract class TransportRunnerBase<
         };
         const apiClient = new ApiClient(apiClientOptions, logger);
 
+        // Each session gets its own write-target keychain for any
+        // secrets registered at runtime (e.g. discovered during connect).
+        // The composite hands loggers a unified read view that covers
+        // both the bootstrap secrets (process config) and the
+        // session-local ones. Tools writing via `session.keychain`
+        // populate only the session scope - they cannot pollute the
+        // bootstrap scope or other sessions.
+        const sessionKeychain = new Keychain();
+        const compositeKeychain = new CompositeKeychain([sessionKeychain, this.keychain]);
+
         const session = new Session({
             userConfig,
             atlasLocalClient:
@@ -323,7 +360,7 @@ export abstract class TransportRunnerBase<
             connectionErrorHandler: sessionOptions?.connectionErrorHandler ?? this.connectionErrorHandler,
             exportsManager,
             connectionManager,
-            keychain: Keychain.root,
+            keychain: sessionKeychain,
             apiClient: sessionOptions?.apiClient ?? apiClient,
         });
         const telemetry = Telemetry.create({
@@ -364,9 +401,11 @@ export abstract class TransportRunnerBase<
         });
 
         // We need to create the MCP logger after the server is constructed
-        // because it needs the server instance
+        // because it needs the server instance. The MCP logger redacts
+        // against the composite (bootstrap + session) so notifications
+        // pushed to the MCP client never leak either scope's secrets.
         if (userConfig.loggers.includes("mcp")) {
-            logger.addLogger(new McpLogger(result, Keychain.root));
+            logger.addLogger(new McpLogger(result, compositeKeychain));
         }
 
         return result;

@@ -633,15 +633,12 @@ export class JwksCache {
 
 // @public
 export class Keychain {
-    constructor();
     // (undocumented)
     get allSecrets(): Secret[];
     // (undocumented)
     clearAllSecrets(): void;
     // (undocumented)
     register(value: Secret["value"], kind: Secret["kind"]): void;
-    // (undocumented)
-    static get root(): Keychain;
 }
 
 // @public (undocumented)
@@ -1063,6 +1060,7 @@ export abstract class TransportRunnerBase<TUserConfig extends UserConfig = UserC
     deviceId: DeviceId;
     // (undocumented)
     protected static getInstructions(config: UserConfig): string;
+    protected readonly keychain: Keychain;
     // (undocumented)
     logger: LoggerBase;
     // (undocumented)
@@ -1086,6 +1084,7 @@ export abstract class TransportRunnerBase<TUserConfig extends UserConfig = UserC
 // @public
 export type TransportRunnerConfig<TUserConfig extends UserConfig = UserConfig, TMetrics extends DefaultMetrics = DefaultMetrics> = {
     userConfig: TUserConfig;
+    keychain?: Keychain;
     createConnectionManager?: ConnectionManagerFactoryFn;
     connectionErrorHandler?: ConnectionErrorHandler;
     createAtlasLocalClient?: AtlasLocalClientFactoryFn;

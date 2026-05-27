@@ -252,6 +252,17 @@ export type CommonProperties = {
     has_docker?: TelemetryBoolSet;
 } & CommonStaticProperties;
 
+// @public
+export class CompositeKeychain extends Keychain {
+    constructor(delegates: readonly Keychain[]);
+    // (undocumented)
+    get allSecrets(): Secret[];
+    // (undocumented)
+    clearAllSecrets(): void;
+    // (undocumented)
+    register(value: Secret["value"], kind: Secret["kind"]): void;
+}
+
 // @public (undocumented)
 export class CompositeLogger extends LoggerBase {
     constructor(...loggers: LoggerBase[]);
@@ -658,15 +669,12 @@ export class JwksCache {
 
 // @public
 export class Keychain {
-    constructor();
     // (undocumented)
     get allSecrets(): Secret[];
     // (undocumented)
     clearAllSecrets(): void;
     // (undocumented)
     register(value: Secret["value"], kind: Secret["kind"]): void;
-    // (undocumented)
-    static get root(): Keychain;
 }
 
 // @public (undocumented)
@@ -843,14 +851,12 @@ export function parseUserConfig(input: {
     warnings: string[];
     parsed: UserConfig | undefined;
     error: string | undefined;
+    secrets: Keychain;
 };
 
 export { PrometheusMetrics }
 
 export { PrometheusMetricsOptions }
-
-// @public (undocumented)
-export function registerGlobalSecretToRedact(value: Secret["value"], kind: Secret["kind"]): void;
 
 export { Registry }
 
@@ -1160,6 +1166,7 @@ export abstract class TransportRunnerBase<TUserConfig extends UserConfig = UserC
     deviceId: DeviceId;
     // (undocumented)
     protected static getInstructions(config: UserConfig): string;
+    protected readonly keychain: Keychain;
     // (undocumented)
     logger: LoggerBase;
     // (undocumented)
@@ -1183,6 +1190,7 @@ export abstract class TransportRunnerBase<TUserConfig extends UserConfig = UserC
 // @public
 export type TransportRunnerConfig<TUserConfig extends UserConfig = UserConfig, TMetrics extends DefaultMetrics = DefaultMetrics> = {
     userConfig: TUserConfig;
+    keychain?: Keychain;
     createConnectionManager?: ConnectionManagerFactoryFn;
     connectionErrorHandler?: ConnectionErrorHandler;
     createAtlasLocalClient?: AtlasLocalClientFactoryFn;

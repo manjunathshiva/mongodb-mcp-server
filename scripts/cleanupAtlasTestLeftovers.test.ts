@@ -149,7 +149,7 @@ async function main(): Promise<void> {
                 clientSecret: process.env.MDB_MCP_API_CLIENT_SECRET || "",
             },
         },
-        new ConsoleLogger(Keychain.root)
+        new ConsoleLogger(new Keychain())
     );
 
     const testOrg = await findTestOrganization(apiClient);

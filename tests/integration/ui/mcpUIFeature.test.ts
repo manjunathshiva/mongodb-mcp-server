@@ -180,7 +180,7 @@ describe("mcpUI feature with custom UIs", () => {
             logger,
             exportsManager,
             connectionManager,
-            keychain: Keychain.root,
+            keychain: new Keychain(),
             connectionErrorHandler,
             atlasLocalClient: await defaultCreateAtlasLocalClient({ logger }),
             apiClient: defaultCreateApiClient(
