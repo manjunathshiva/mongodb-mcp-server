@@ -2,28 +2,35 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
-    "containerAppName": { "value": "mongo-mcp-with-auth" },
+    "containerAppName": { "value": "mongo-mcp" },
     "containerAppEnvironmentName": { "value": "" },
-    //"containerImage": { "value": "mongodb/mongodb-mcp-server:1.10.0" },    Omitted as now its kept up to date on every release
+    "containerImage": { "value": "<ACR_LOGIN_SERVER>/mongodb-mcp-server:hardened" },
+    "acrLoginServer": { "value": "<ACR_LOGIN_SERVER>" },
     "containerCpu": { "value": "1.0" },
     "containerMemory": { "value": "2Gi" },
-    "appEnvironmentVars": {
-      "value": {
-        "MDB_MCP_READ_ONLY": "false",
-        "MDB_MCP_HTTP_PORT": "8080",
-        "MDB_MCP_HTTP_HOST": "::",
-        "MDB_MCP_TRANSPORT": "http",
-        "MDB_MCP_LOGGERS": "disk,mcp,stderr",
-        "MDB_MCP_LOG_PATH": "/tmp/mongodb-mcp"
-      }
-    },
-    "mdbConnectionString": { "value": "<MONGODB_CONNECTION_STRING>" },
+    "readOnly": { "value": false },
+    "httpPort": { "value": 8080 },
+
+    // Enforce Microsoft Entra at the ACA edge (EasyAuth). Foundry connects
+    // with Authentication = Microsoft Entra, Type = Project Managed Identity,
+    // Audience = authClientId.
     "authMode": { "value": "MicrosoftMIBasedAuth" },
-    "authClientId": { "value": "<AUTH_CLIENT_ID>" },
-    "authIssuerUrl": { "value": "<AUTH_ISSUER_URL>" },
-    "authTenantId": { "value": "<AUTH_TENANT_ID>" },
-    "authAllowedClientApps": {
-      "value": ["<AUTH_ALLOWED_CLIENT_APP_1>", "<AUTH_ALLOWED_CLIENT_APP_2>"]
-    }
+    "authClientId": { "value": "<ENTRA_APP_CLIENT_ID>" },
+    "authIssuerUrl": { "value": "https://login.microsoftonline.com/<TENANT_ID>/v2.0" },
+    "authTenantId": { "value": "<TENANT_ID>" },
+    // Optional: restrict which client apps may call. Empty = any app in tenant.
+    "authAllowedClientApps": { "value": [] },
+
+    "authHeaderName": { "value": "x-mcp-key" },
+
+    // SECRETS — do NOT commit real values. Override at deploy time, e.g.:
+    //   az deployment group create ... \
+    //     --parameters @paramsWithAuthEnabled.json \
+    //     --parameters mdbConnectionString="$CS" x509CertificatePem="$(cat client.pem)" sharedSecretValue="$KEY"
+    // The connection string MUST be X.509 and reference the mounted cert path:
+    //   mongodb+srv://<cluster>/?authSource=%24external&authMechanism=MONGODB-X509&tls=true&tlsCertificateKeyFile=/certs/client.pem
+    "mdbConnectionString": { "value": "<X509_CONNECTION_STRING>" },
+    "x509CertificatePem": { "value": "<PEM_CONTENTS>" },
+    "sharedSecretValue": { "value": "<STRONG_RANDOM_SECRET>" }
   }
 }

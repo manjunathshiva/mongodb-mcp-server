@@ -1,116 +1,165 @@
-# Deploy MongoDB MCP Server on Azure Container Apps
+# Host the hardened MongoDB MCP Server on Azure Container Apps (for Foundry agents)
 
-## Overview
+This deploys the **hardened** MongoDB MCP Server (this branch: X.509-only
+MongoDB auth, no delete tools, OWASP MCP Top 10 mitigations) to **Azure
+Container Apps (ACA)** with a public HTTPS endpoint that **Microsoft Foundry
+hosted agents** can connect to via the MCP tool.
 
-This directory contains an Azure Bicep template (`bicep/main.bicep`) and supporting parameter files for deploying the infrastructure required to run the MongoDB MCP (Model Context Protocol) server. Use this guide to prepare prerequisites, select the appropriate parameter file, and run the deployment end-to-end.
+## Authentication model (two independent layers)
+
+```
+Foundry agent ──HTTPS──▶ ACA ingress ──▶ EasyAuth (Microsoft Entra)  ──▶ MCP container
+                                          │ validates the caller's        │ requires the
+                                          │ Entra token (audience =        │ shared-secret
+                                          │ app client ID); 401 if bad     │ header (403 if
+                                          ▼                                ▼ missing/wrong)
+                                   edge identity layer            app-layer secret layer
+```
+
+- **Edge (ACA EasyAuth / Microsoft Entra):** Foundry connects using its
+  **Project Managed Identity**, requesting a token whose audience is the MCP
+  server's Entra **app client ID**. ACA validates it and returns `401` before
+  the request reaches the container.
+- **App (`httpAuthMode=platform` + shared-secret header):** the server is told
+  identity is verified upstream, but it still **rejects any request lacking the
+  shared-secret header** (`x-mcp-key` by default). This keeps OWASP **MCP07**
+  enforced *in the app itself* — it never serves an unauthenticated request.
+
+Both layers are required at deploy time: the bicep refuses to omit the shared
+secret, and `authMode=MicrosoftMIBasedAuth` wires the Entra edge.
+
+> The server connects to MongoDB Atlas using **X.509 client-certificate** auth
+> only (username/password is rejected). The PEM is mounted as a secret volume.
 
 ## Prerequisites
 
-- Azure CLI (2.55.0 or later) installed and signed in (`az login`).
-- Azure subscription with permissions to deploy the required resources.
-- MongoDB MCP server container image available in dockerhub registry (mongodb/mongodb-mcp-server:1.10.0). This bicep is tested with version 1.10.0. Please change the parameter files to use other versions of the MongoDB MCP server docker image.
+- Azure CLI ≥ 2.55 (`az login`) with rights to deploy ACA + role assignments.
+- An **Azure Container Registry (ACR)** (private) to hold the image.
+- A **Microsoft Entra app registration** to represent the MCP server (gives you
+  the **app client ID**, **tenant ID**, **issuer URL**). See
+  <https://learn.microsoft.com/azure/container-apps/authentication-entra> →
+  "Option 2: Use an existing registration created separately".
+- A **MongoDB Atlas X.509** database user, its **client certificate PEM**, and
+  the matching **X.509 connection string**.
+- A Foundry project to register the tool in.
 
-## Parameter Files
+## Step 1 — Build and push the image
 
-Two sample parameter files are provided to help you tailor deployments. Copy these files and remove the suffix "\_template" part to create parameter files as "bicep/params.json" and "bicep/paramsWithAuthEnabled.json".
+The image is built **from this source branch** (not the published npm package)
+via `deploy/azure/Dockerfile`. Run from the repo root:
 
-- `bicep/params_template.json`: Baseline configuration that deploys the MongoDB MCP server with authentication disabled or using default settings. Use this when testing in development environments or when external authentication is not required.
-- `bicep/paramsWithAuthEnabled_template.json`: Extends the baseline deployment and enables Microsoft Entra ID (Azure AD) authentication using managed identity and client application IDs. Use this when you want the server protected with Azure AD authentication via managed identity.
+```bash
+ACR=myregistry                      # your ACR name (without .azurecr.io)
+az acr login --name "$ACR"
+docker build -f deploy/azure/Dockerfile -t "$ACR.azurecr.io/mongodb-mcp-server:hardened" .
+docker push "$ACR.azurecr.io/mongodb-mcp-server:hardened"
+```
 
-### Reusing an Existing Container Apps Environment
+## Step 2 — Identity for the private image pull (recommended)
 
-- Set `containerAppEnvironmentName` to the name of an already provisioned Azure Container Apps managed environment to reuse it.
-- Leave `containerAppEnvironmentName` empty to let the template create a new managed environment.
-- If you reuse an existing environment, ensure it is in a healthy provisioned state before deployment. You can verify that with:
+A system-assigned identity can't pull on the *first* deploy (it doesn't exist
+yet). Pre-create a **user-assigned identity** and grant it `AcrPull`:
 
-  ```bash
-  az containerapp env show \
-     --resource-group <RESOURCE_GROUP> \
-     --name <CONTAINER_APP_ENVIRONMENT_NAME> \
-     --query properties.provisioningState -o tsv
-  ```
+```bash
+RG=mongodb-mcp-rg
+az group create -n "$RG" -l eastus
+az identity create -g "$RG" -n mcp-acr-pull
+PRINCIPAL=$(az identity show -g "$RG" -n mcp-acr-pull --query principalId -o tsv)
+UAMI_ID=$(az identity show -g "$RG" -n mcp-acr-pull --query id -o tsv)
+ACR_ID=$(az acr show -n "$ACR" --query id -o tsv)
+az role assignment create --assignee "$PRINCIPAL" --role AcrPull --scope "$ACR_ID"
+# pass $UAMI_ID as acrPullIdentityResourceId below
+```
 
-  The deployment should only proceed when the command returns `Succeeded`.
+(Alternative: omit `acrPullIdentityResourceId`, deploy once, grant `AcrPull` to
+the `containerAppPrincipalId` output, then redeploy.)
 
-> **Tip:** Update the image reference, secrets, networking, and any other environment-specific values in the chosen parameter file before deployment.
+## Step 3 — Prepare parameters
 
-### Managed Identity Authentication Parameters
+Copy a template (drop the `_template` suffix) and fill the non-secret values:
 
-When using `bicep/paramsWithAuthEnabled.json`, provide tenant and app-specific values for the following parameters before deployment:
+```bash
+cp bicep/paramsWithAuthEnabled_template.json bicep/paramsWithAuthEnabled.json
+```
 
-- `authClientId`: Set to the application (client) ID of the Microsoft Entra ID app registration that represents the MongoDB MCP server API (often the managed identity or a server-side app registration).
-- `authIssuerUrl`: Use the issuer URL for your tenant. Use `<authentication-endpoint>/<TENANT-ID>/v2.0`, and replace <authentication-endpoint> with the authentication endpoint for your cloud environment (for example, "https://login.microsoftonline.com" for global Azure), also replacing <TENANT-ID> with the Directory (tenant) ID in which the app registration was created.
-- `authTenantId`: The tenant ID (directory ID) of the Microsoft Entra tenant that owns the identities interacting with the MCP server. Obtain it via `az account show --query tenantId -o tsv`.
-- `authAllowedClientApps` (optional): Provide an array of application (client) IDs for every client that should be allowed to request tokens for the MongoDB MCP server (for example, front-end apps, automation scripts, or integration partners). Omit this property to allow all clients without any filtering.
+Set `containerImage`, `acrLoginServer`, `acrPullIdentityResourceId`,
+`authClientId`, `authIssuerUrl`, `authTenantId` (and optionally
+`authAllowedClientApps`). **Leave secrets as placeholders** — pass them at
+deploy time so they never land in source control.
 
-For deeper guidance on Microsoft Entra authentication in Azure Container Apps, see the official docs: <https://learn.microsoft.com/en-us/azure/container-apps/authentication-entra>. Use "Option 2: Use an existing registration created separately". Once the bicep is executed, it will "Enable Microsoft Entra ID in your container app" and thus you don't need to manually do that. When you connect to the local MongoDB MCP server hosted in ACA from Microsoft Foundry, select "Authentication" as "Microsoft Entra" and "Type" as "Project Managed Identity" and provide the application (client) ID as the "Audience" to authenticate using the Entra ID registered app.
+The **connection string** must be X.509 and point at the mounted cert path
+(`/certs/client.pem`):
 
-## Deploy the Bicep Template
+```
+mongodb+srv://<cluster>.mongodb.net/?authSource=%24external&authMechanism=MONGODB-X509&tls=true&tlsCertificateKeyFile=/certs/client.pem
+```
 
-1. **Set common variables (PowerShell example):**
+## Step 4 — Deploy
 
-   ```powershell
-   $location = "eastus"
-   $resourceGroup = "mongodb-mcp-demo-rg"
-   $templateFile = "bicep/main.bicep"
-   $parameterFile = "bicep/params.json"            # or bicep/paramsWithAuthEnabled.json
-   ```
+```bash
+CS='mongodb+srv://...tlsCertificateKeyFile=/certs/client.pem'   # X.509 only
+KEY=$(openssl rand -hex 32)                                     # shared-secret header value
 
-   **Mac and Linux example**
+az deployment group create \
+  -g "$RG" \
+  --template-file bicep/main.bicep \
+  --parameters @bicep/paramsWithAuthEnabled.json \
+  --parameters \
+      acrPullIdentityResourceId="$UAMI_ID" \
+      mdbConnectionString="$CS" \
+      x509CertificatePem="$(cat client.pem)" \
+      sharedSecretValue="$KEY"
+```
 
-   ```bash
-   export location="eastus"                     \
-   export resourceGroup="mongodb-mcp-demo-rg"   \
-   export templateFile="bicep/main.bicep"       \
-   export parameterFile="bicep/params.json"     # or bicep/paramsWithAuthEnabled.json
-   ```
+Note the outputs: `containerAppUrl` (ends in `/mcp`) and
+`containerAppPrincipalId`. Save `$KEY` — Foundry needs it.
 
-2. **Create the resource group (if it does not exist):**
+## Step 5 — Verify
 
-   ```powershell
-   az group create --name $resourceGroup --location $location
-   ```
+```bash
+URL=$(az deployment group show -g "$RG" -n main --query properties.outputs.containerAppUrl.value -o tsv)
+# Unauthenticated request should be 401 (EasyAuth) — never 200:
+curl -s -o /dev/null -w "%{http_code}\n" "$URL"      # expect 401
+```
 
-3. **Validate the deployment (optional but recommended):**
+A `200`/`426` here means EasyAuth isn't enforcing — stop and fix before
+connecting Foundry.
 
-   ```powershell
-   az deployment group what-if \
-      --resource-group $resourceGroup \
-      --template-file $templateFile \
-      --parameters @$parameterFile
-   ```
+## Step 6 — Register the tool in Foundry
 
-4. **Run the deployment:**
+In the Foundry portal, add an MCP tool / connection:
 
-   ```powershell
-   az deployment group create \
-      --resource-group $resourceGroup \
-      --template-file $templateFile \
-      --parameters @$parameterFile
-   ```
+- **Server URL:** the `containerAppUrl` output (`https://<app>.<region>.azurecontainerapps.io/mcp`)
+- **Authentication:** *Microsoft Entra*
+- **Type:** *Project Managed Identity*
+- **Audience:** the MCP server's Entra **app client ID** (`authClientId`)
+- **Custom header:** `x-mcp-key: <the $KEY value>` (the app-layer shared secret)
+- **Approval:** keep `require_approval` on for write/create tools.
 
-   If the deployment returns an error, rerun the command with `--debug` to surface detailed troubleshooting output.
+> **Verify both credentials ride together (the one open question):** Foundry must
+> send the `x-mcp-key` header *alongside* its managed-identity `Authorization`
+> token. If the platform sends only one, you'll see `401` (EasyAuth) or `403`
+> (missing header). Fallbacks: move the secret to a header EasyAuth tolerates,
+> or set `authMode` so the gateway alone gates (the app still requires the
+> header — adjust per your policy).
 
-5. **Monitor outputs:** Review the deployment outputs (ACA url and ACA environment name) and logs for connection endpoints, credential references, or other values needed to complete integration.
+## Notes
 
-## Post-Deployment Checklist
-
-- After the Azure Container Apps deployment completes, access the MCP server by visiting the application’s public endpoint with /mcp appended. Example: https://[CONTAINER_APP_NAME].<region>.azurecontainerapps.io/mcp. You can use the ACA url you copied from the outputs section above.
-
-## Updating the Deployment
-
-To apply changes:
-
-1. Update the parameter file or `main.bicep` as needed.
-2. Re-run the `az deployment group create` command with the same resource group.
-3. Use `az deployment group what-if` to preview differences before applying them.
+- **Tools available:** this build has **no delete tools** (drop/delete are
+  compiled out and cannot be re-enabled by config). `readOnly=false` allows
+  create/update; set `readOnly=true` for read + metadata only.
+- **Scaling:** pinned to a single replica because MCP Streamable HTTP holds
+  per-session state. To scale out, switch the server to stateless mode
+  (`MDB_MCP_HTTP_RESPONSE_TYPE=json` + `MDB_MCP_EXTERNALLY_MANAGED_SESSIONS=true`)
+  and raise `min/maxReplicas`.
+- **Cert rotation:** update the `mdb-x509-cert` secret (redeploy with a new
+  `x509CertificatePem`); the driver picks up the remounted file on restart.
+- **Secrets:** never commit real `mdbConnectionString`, `x509CertificatePem`,
+  or `sharedSecretValue`. Pass them via `--parameters` overrides or Key Vault
+  references.
 
 ## Cleanup
 
-Remove the deployed resources when no longer needed:
-
-```powershell
-az group delete --name $resourceGroup --yes --no-wait
+```bash
+az group delete --name "$RG" --yes --no-wait
 ```
-
-> **Reminder:** Deleting the resource group removes all resources inside it. Ensure any persistent data or backups are retained elsewhere before running the cleanup command.

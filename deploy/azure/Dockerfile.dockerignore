@@ -1,0 +1,40 @@
+# Build-context ignore for deploy/azure/Dockerfile (source build).
+#
+# BuildKit uses "<dockerfile>.dockerignore" when present, so this applies
+# ONLY to `docker build -f deploy/azure/Dockerfile .` and does not affect the
+# repo-root .dockerignore used by the published-image Dockerfile.
+#
+# Unlike the root .dockerignore, this MUST keep scripts/ (build:universal-
+# package runs scripts/createUniversalPackage.ts) and tests/ (tests/browser is
+# a pnpm workspace member required by --frozen-lockfile). It only strips
+# things that are rebuilt or irrelevant to the build.
+
+# Dependencies and build outputs are reinstalled / rebuilt inside the image.
+node_modules
+**/node_modules
+dist
+**/dist
+coverage
+**/coverage
+
+# VCS, local state, secrets, logs.
+.git
+.gitignore
+.env
+*.env
+*.log
+tmp
+**/tmp
+.vscode
+.idea
+
+# Container assets and docs not needed to compile.
+**/*.Dockerfile
+Dockerfile
+deploy/aws
+*.md
+**/*.md
+
+# Local X.509 fixtures / certs must never enter an image build context.
+*.pem
+**/*.pem

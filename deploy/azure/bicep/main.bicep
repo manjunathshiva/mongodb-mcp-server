@@ -7,8 +7,14 @@ param containerAppEnvironmentName string = ''
 @description('Name of the Container App')
 param containerAppName string = 'mongo-mcp-server-app'
 
-@description('Docker image to deploy')
-param containerImage string = 'mongodb/mongodb-mcp-server:1.11.0'
+@description('Container image to deploy. For the hardened source build, push deploy/azure/Dockerfile to your ACR and set e.g. <registry>.azurecr.io/mongodb-mcp-server:hardened')
+param containerImage string
+
+@description('ACR login server (e.g. myregistry.azurecr.io) for private image pulls. Leave empty for a public image (e.g. Docker Hub).')
+param acrLoginServer string = ''
+
+@description('Resource ID of a pre-created user-assigned managed identity that has AcrPull on the registry. Recommended for private ACR: it lets the FIRST deploy pull the image (a system-assigned identity does not exist until the app is created, so its first pull would fail). Leave empty to fall back to the app\'s system-assigned identity (then grant AcrPull to the containerAppPrincipalId output and redeploy).')
+param acrPullIdentityResourceId string = ''
 
 @description('Container CPU (vCPU) as string. Allowed: 0.25 - 2.0 in 0.25 increments')
 @allowed([
@@ -35,39 +41,45 @@ var containerCpuNumber = json(containerCpu)
 ])
 param containerMemory string = '2Gi'
 
-@description('Container App Environment Variables')
-param appEnvironmentVars object = {
-  MDB_MCP_READ_ONLY: 'true' // set to 'false' to enable write operations
-  MDB_MCP_HTTP_PORT: '8080'
-  MDB_MCP_HTTP_HOST: '::'
-  MDB_MCP_TRANSPORT: 'http'
-  MDB_MCP_LOGGERS: 'disk,mcp,stderr'
-  MDB_MCP_LOG_PATH: '/tmp/mongodb-mcp'
-}
+@description('Enable write (create/update) operations. Note: this hardened build has no delete tools regardless. true = read + metadata only.')
+param readOnly bool = false
 
-@description('Authentication mode toggle for the Container App. NOAUTH disables platform auth; MicrosoftMIBasedAuth enables Azure AD auth and enforces 401 for unauthenticated requests.')
+@description('Container HTTP port the MCP server listens on.')
+param httpPort int = 8080
+
+@description('Microsoft Entra authentication for the Container App edge (EasyAuth). NOAUTH = no edge identity check (dev only; the app-layer shared-secret header still applies). MicrosoftMIBasedAuth = enforce Entra at the edge (recommended; Foundry connects with Project Managed Identity).')
 @allowed([
   'NOAUTH'
   'MicrosoftMIBasedAuth'
 ])
-param authMode string = 'NOAUTH'
+param authMode string = 'MicrosoftMIBasedAuth'
 
-@description('Azure AD Application (client) ID used when authMode is MicrosoftMIBasedAuth. Leave blank for NOAUTH.')
+@description('Microsoft Entra Application (client) ID used when authMode is MicrosoftMIBasedAuth. This is the audience Foundry must request a token for.')
 param authClientId string = ''
 
-@description('Issuer URL (OpenID issuer) when authMode is MicrosoftMIBasedAuth. Example: https://login.microsoftonline.com/<tenant-id>/v2.0 or https://sts.windows.net/<tenant-id>/v2.0')
+@description('OpenID issuer URL when authMode is MicrosoftMIBasedAuth. Example: https://login.microsoftonline.com/<tenant-id>/v2.0')
 param authIssuerUrl string = ''
 
-@description('Azure AD Tenant ID (GUID) used when authMode is MicrosoftMIBasedAuth. Provided separately to avoid hard-coded cloud endpoints in template logic.')
+@description('Microsoft Entra Tenant ID (GUID) used when authMode is MicrosoftMIBasedAuth.')
 param authTenantId string = ''
 
-@description('Optional array of allowed client application IDs. If empty, all applications are allowed (not recommended).')
+@description('Optional array of allowed client application IDs. If empty, all applications in the tenant are allowed (not recommended for production).')
 param authAllowedClientApps array = []
 
 @secure()
-@description('MongoDB Connection String')
+@description('MongoDB X.509 connection string. MUST be authMechanism=MONGODB-X509, authSource=$external, tls=true, and tlsCertificateKeyFile pointing at the mounted cert path (default /certs/client.pem). Username/password is rejected by the server.')
 param mdbConnectionString string
 
+@secure()
+@description('Contents of the X.509 client certificate PEM (private key + cert). Mounted into the container as a secret volume at /certs/client.pem.')
+param x509CertificatePem string
+
+@description('Name of the app-layer shared-secret HTTP header the MCP server requires on every request (defense in depth alongside the Entra edge check). The value is supplied separately via sharedSecretValue. Foundry must send this header via its project connection.')
+param authHeaderName string = 'x-mcp-key'
+
+@secure()
+@description('Value of the app-layer shared-secret header. Generate a strong random value. Required: httpAuthMode=platform refuses to start without a shared-secret header.')
+param sharedSecretValue string
 
 var useExistingContainerAppEnvironment = !empty(containerAppEnvironmentName)
 
@@ -85,78 +97,117 @@ resource containerAppEnv 'Microsoft.App/managedEnvironments@2024-02-02-preview' 
 
 var envResourceId = useExistingContainerAppEnvironment ? existingContainerAppEnv.id : containerAppEnv.id
 
-// Build environment variables array
-var envVarsArray = [
-  for item in items(appEnvironmentVars): {
-    name: item.key
-    value: string(item.value)
+// The MCP server's runtime configuration. httpAuthMode=platform tells the
+// server that identity is verified upstream (ACA EasyAuth / Entra); it still
+// enforces the shared-secret header below so it never serves an
+// unauthenticated request (OWASP MCP07, defense in depth).
+var baseEnvVars = [
+  {
+    name: 'MDB_MCP_TRANSPORT'
+    value: 'http'
+  }
+  {
+    name: 'MDB_MCP_HTTP_HOST'
+    value: '0.0.0.0'
+  }
+  {
+    name: 'MDB_MCP_HTTP_PORT'
+    value: string(httpPort)
+  }
+  {
+    name: 'MDB_MCP_HTTP_AUTH_MODE'
+    value: 'platform'
+  }
+  {
+    name: 'MDB_MCP_LOGGERS'
+    value: 'stderr,mcp'
+  }
+  {
+    name: 'MDB_MCP_READ_ONLY'
+    value: string(readOnly)
   }
 ]
+
+// Secrets stored in the Container App. The shared-secret header is supplied to
+// the server as a JSON object via MDB_MCP_HTTP_HEADERS so the secret value is
+// never an inline env value.
+var httpHeadersJson = '{"${authHeaderName}":"${sharedSecretValue}"}'
 
 var containerAppSecrets = [
   {
     name: 'mdb-mcp-connection-string'
     value: mdbConnectionString
   }
+  {
+    name: 'mcp-http-headers'
+    value: httpHeadersJson
+  }
+  {
+    name: 'mdb-x509-cert'
+    value: x509CertificatePem
+  }
 ]
 
-var connectionSecretEnvVars = [
+var secretEnvVars = [
   {
     name: 'MDB_MCP_CONNECTION_STRING'
     secretRef: 'mdb-mcp-connection-string'
   }
+  {
+    name: 'MDB_MCP_HTTP_HEADERS'
+    secretRef: 'mcp-http-headers'
+  }
 ]
 
-// Additional environment variables injected when MicrosoftMIBasedAuth is enabled (merged after user-provided vars so user can override if desired)
-var authEnvVars = authMode == 'MicrosoftMIBasedAuth'
-  ? concat([
-      {
-        name: 'MDB_MCP_HTTP_AUTH_MODE'
-        value: 'azure-managed-identity'
-      }
-      {
-        // Tenant ID of the Azure AD tenant
-        name: 'MDB_MCP_AZURE_MANAGED_IDENTITY_TENANT_ID'
-        value: authTenantId
-      }
-      {
-        // Client ID of the Azure AD App representing your container app
-        name: 'MDB_MCP_AZURE_MANAGED_IDENTITY_CLIENT_ID'
-        value: authClientId
-      }
-    ], length(authAllowedClientApps) > 0 ? [
-      {
-        // Comma-separated list of allowed Client App IDs for access
-        // (only listed Client Apps are allowed if client apps specified)
-        name: 'MDB_MCP_AZURE_MANAGED_IDENTITY_ALLOWED_APP_IDS'
-        value: join(authAllowedClientApps, ',')
-      }
-    ] : [])
-  : [
-      {
-        name: 'MDB_MCP_HTTP_AUTH_MODE'
-        value: 'none'
-      }
-    ]
+var useUserAssignedAcrPull = !empty(acrPullIdentityResourceId)
+
+// Registry pull identity: a pre-created user-assigned identity (first-deploy
+// safe) when provided, otherwise the app's system-assigned identity.
+var registries = empty(acrLoginServer) ? [] : [
+  {
+    server: acrLoginServer
+    identity: useUserAssignedAcrPull ? acrPullIdentityResourceId : 'system'
+  }
+]
+
+var appIdentity = useUserAssignedAcrPull ? {
+  type: 'SystemAssigned, UserAssigned'
+  userAssignedIdentities: {
+    '${acrPullIdentityResourceId}': {}
+  }
+} : {
+  type: 'SystemAssigned'
+}
 
 // Deploy Container App
 resource containerApp 'Microsoft.App/containerApps@2024-02-02-preview' = {
   name: containerAppName
   location: location
-  identity: {
-    type: 'SystemAssigned'
-  }
+  identity: appIdentity
   properties: {
     managedEnvironmentId: envResourceId
     configuration: {
       ingress: {
         external: true
-        targetPort: int(appEnvironmentVars.MDB_MCP_HTTP_PORT)
+        targetPort: httpPort
         transport: 'auto'
       }
       secrets: containerAppSecrets
+      registries: registries
     }
     template: {
+      volumes: [
+        {
+          name: 'certs'
+          storageType: 'Secret'
+          secrets: [
+            {
+              secretRef: 'mdb-x509-cert'
+              path: 'client.pem'
+            }
+          ]
+        }
+      ]
       containers: [
         {
           name: 'mcpserver'
@@ -165,30 +216,37 @@ resource containerApp 'Microsoft.App/containerApps@2024-02-02-preview' = {
             cpu: containerCpuNumber
             memory: containerMemory
           }
-          env: concat(
-            envVarsArray,
-            authEnvVars,
-            connectionSecretEnvVars
-          )
+          env: concat(baseEnvVars, secretEnvVars)
+          volumeMounts: [
+            {
+              volumeName: 'certs'
+              mountPath: '/certs'
+            }
+          ]
         }
       ]
+      // Pinned to a single replica: MCP Streamable HTTP holds per-session
+      // state, so requests for a session must hit the same replica. To scale
+      // out, switch the server to stateless mode (httpResponseType=json +
+      // externallyManagedSessions=true) and raise these.
       scale: {
         minReplicas: 1
         maxReplicas: 1
-        rules: [] // disables autoscaling
+        rules: []
       }
     }
   }
 }
 
-// Container App Authentication (child resource) - only deployed when MicrosoftMIBasedAuth selected
+// Container App edge authentication (EasyAuth / Microsoft Entra). Validates
+// the caller's Entra token (Foundry Project Managed Identity, audience =
+// authClientId) and returns 401 before the request reaches the container.
 resource containerAppAuth 'Microsoft.App/containerApps/authConfigs@2024-10-02-preview' = if (authMode == 'MicrosoftMIBasedAuth') {
   name: 'current'
   parent: containerApp
   properties: {
     platform: {
       enabled: true
-      // runtimeVersion optional
     }
     globalValidation: {
       unauthenticatedClientAction: 'Return401'
@@ -205,7 +263,6 @@ resource containerAppAuth 'Microsoft.App/containerApps/authConfigs@2024-10-02-pr
           allowedAudiences: [
             authClientId
           ]
-          // defaultAuthorizationPolicy allows restriction to specific client applications
           defaultAuthorizationPolicy: length(authAllowedClientApps) > 0 ? {
             allowedApplications: authAllowedClientApps
           } : null
@@ -219,4 +276,7 @@ resource containerAppAuth 'Microsoft.App/containerApps/authConfigs@2024-10-02-pr
 }
 
 output containerAppUrl string = 'https://${containerApp.properties.configuration.ingress.fqdn}/mcp'
+output containerAppPrincipalId string = containerApp.identity.principalId
 output managedEnvironmentName string = useExistingContainerAppEnvironment ? existingContainerAppEnv.name : containerAppEnv.name
+@description('Tenant ID param is surfaced for reference; EasyAuth issuer carries the tenant.')
+output authTenantIdEcho string = authTenantId
