@@ -123,9 +123,13 @@ describeWithMongoDB("aggregate tool", (integration) => {
         );
     });
 
-    it("can not run $out stages in readOnly mode", async () => {
+    // Additive-only policy: $out/$merge are ALWAYS forbidden (they overwrite or
+    // replace collection data), regardless of readOnly / disabledTools config.
+    const additiveOnlyOutMergeError =
+        "Error running aggregate: Aggregation $out/$merge stages are disabled by policy: they overwrite or replace collection data, and this server is additive-only.";
+
+    it("rejects $out stages (additive-only policy)", async () => {
         await integration.connectMcpClient();
-        integration.mcpServer().userConfig.readOnly = true;
         const response = await integration.mcpClient().callTool({
             name: "aggregate",
             arguments: {
@@ -134,15 +138,11 @@ describeWithMongoDB("aggregate tool", (integration) => {
                 pipeline: [{ $out: "outpeople" }],
             },
         });
-        const content = getResponseContent(response);
-        expect(content).toEqual(
-            "Error running aggregate: In readOnly mode you can not run pipelines with $out or $merge stages."
-        );
+        expect(getResponseContent(response)).toEqual(additiveOnlyOutMergeError);
     });
 
-    it("can not run $merge stages in readOnly mode", async () => {
+    it("rejects $merge stages (additive-only policy)", async () => {
         await integration.connectMcpClient();
-        integration.mcpServer().userConfig.readOnly = true;
         const response = await integration.mcpClient().callTool({
             name: "aggregate",
             arguments: {
@@ -151,10 +151,7 @@ describeWithMongoDB("aggregate tool", (integration) => {
                 pipeline: [{ $merge: "outpeople" }],
             },
         });
-        const content = getResponseContent(response);
-        expect(content).toEqual(
-            "Error running aggregate: In readOnly mode you can not run pipelines with $out or $merge stages."
-        );
+        expect(getResponseContent(response)).toEqual(additiveOnlyOutMergeError);
     });
 
     it("can run $limit stages with a small number", async () => {
@@ -181,59 +178,8 @@ describeWithMongoDB("aggregate tool", (integration) => {
         expect(content).toContain("The aggregation resulted in 1 documents");
     });
 
-    it("can run $out stages in non-readonly mode", async () => {
-        const mongoClient = integration.mongoClient();
-        await mongoClient
-            .db(integration.randomDbName())
-            .collection("people")
-            .insertMany([
-                { name: "Peter", age: 5 },
-                { name: "Laura", age: 10 },
-                { name: "Søren", age: 15 },
-            ]);
-        await integration.connectMcpClient();
-        const response = await integration.mcpClient().callTool({
-            name: "aggregate",
-            arguments: {
-                database: integration.randomDbName(),
-                collection: "people",
-                pipeline: [{ $out: "outpeople" }],
-            },
-        });
-        const content = getResponseContent(response);
-        expect(content).toEqual("The aggregation pipeline executed successfully.");
-
-        const copiedDocs = await mongoClient.db(integration.randomDbName()).collection("outpeople").find().toArray();
-        expect(copiedDocs).toHaveLength(3);
-        expect(copiedDocs.map((doc) => doc.name as string)).toEqual(["Peter", "Laura", "Søren"]);
-    });
-
-    it("can run $merge stages in non-readonly mode", async () => {
-        const mongoClient = integration.mongoClient();
-        await mongoClient
-            .db(integration.randomDbName())
-            .collection("people")
-            .insertMany([
-                { name: "Peter", age: 5 },
-                { name: "Laura", age: 10 },
-                { name: "Søren", age: 15 },
-            ]);
-        await integration.connectMcpClient();
-        const response = await integration.mcpClient().callTool({
-            name: "aggregate",
-            arguments: {
-                database: integration.randomDbName(),
-                collection: "people",
-                pipeline: [{ $merge: "mergedpeople" }],
-            },
-        });
-        const content = getResponseContent(response);
-        expect(content).toEqual("The aggregation pipeline executed successfully.");
-
-        const mergedDocs = await mongoClient.db(integration.randomDbName()).collection("mergedpeople").find().toArray();
-        expect(mergedDocs).toHaveLength(3);
-        expect(mergedDocs.map((doc) => doc.name as string)).toEqual(["Peter", "Laura", "Søren"]);
-    });
+    // (Removed "can run $out/$merge in non-readonly mode" — under the
+    // additive-only policy these are now always rejected; see the tests above.)
 
     it("should emit tool event without auto-embedding usage metadata", async () => {
         const mockEmitEvents = vi.spyOn(integration.mcpServer()["telemetry"], "emitEvents");
@@ -265,41 +211,8 @@ describeWithMongoDB("aggregate tool", (integration) => {
         expect(emittedEvent.properties.embeddingsGeneratedBy).toBeUndefined();
     });
 
-    for (const disabledOpType of ["create", "update", "delete"] as const) {
-        it(`can not run $out stages when ${disabledOpType} operation is disabled`, async () => {
-            await integration.connectMcpClient();
-            integration.mcpServer().userConfig.disabledTools = [disabledOpType];
-            const response = await integration.mcpClient().callTool({
-                name: "aggregate",
-                arguments: {
-                    database: integration.randomDbName(),
-                    collection: "people",
-                    pipeline: [{ $out: "outpeople" }],
-                },
-            });
-            const content = getResponseContent(response);
-            expect(content).toEqual(
-                "Error running aggregate: When 'create', 'update', or 'delete' operations are disabled, you can not run pipelines with $out or $merge stages."
-            );
-        });
-
-        it(`can not run $merge stages when ${disabledOpType} operation is disabled`, async () => {
-            await integration.connectMcpClient();
-            integration.mcpServer().userConfig.disabledTools = [disabledOpType];
-            const response = await integration.mcpClient().callTool({
-                name: "aggregate",
-                arguments: {
-                    database: integration.randomDbName(),
-                    collection: "people",
-                    pipeline: [{ $merge: "outpeople" }],
-                },
-            });
-            const content = getResponseContent(response);
-            expect(content).toEqual(
-                "Error running aggregate: When 'create', 'update', or 'delete' operations are disabled, you can not run pipelines with $out or $merge stages."
-            );
-        });
-    }
+    // (Removed the per-disabledOpType $out/$merge tests — the additive-only
+    // policy forbids them unconditionally, covered by the two tests above.)
 
     describe("when getSearchIndexes throws after a successful search capability probe", () => {
         afterEach(() => {

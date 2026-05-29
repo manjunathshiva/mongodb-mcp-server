@@ -210,24 +210,19 @@ Note to LLM: If the entire aggregation result is required, use the "export" tool
     }
 
     private async assertOnlyUsesPermittedStages(pipeline: Record<string, unknown>[]): Promise<void> {
-        const writeOperations: OperationType[] = ["update", "create", "delete"];
         const isSearchSupported = await this.session.isSearchSupported();
 
-        let writeStageForbiddenError = "";
-
-        if (this.config.readOnly) {
-            writeStageForbiddenError = "In readOnly mode you can not run pipelines with $out or $merge stages.";
-        } else if (this.config.disabledTools.some((t) => writeOperations.includes(t as OperationType))) {
-            writeStageForbiddenError =
-                "When 'create', 'update', or 'delete' operations are disabled, you can not run pipelines with $out or $merge stages.";
-        }
-
         for (const stage of pipeline) {
-            // This validates that in readOnly mode or "write" operations are disabled, we can't use $out or $merge.
-            // This is really important because aggregates are the only "multi-faceted" tool in the MQL, where you
-            // can both read and write.
-            if (this.isWriteStage(stage) && writeStageForbiddenError) {
-                throw new MongoDBError(ErrorCodes.ForbiddenWriteOperation, writeStageForbiddenError);
+            // Policy: this server is additive-only, so the destructive
+            // aggregation stages $out and $merge are ALWAYS forbidden — they
+            // overwrite or replace an entire collection's contents. Aggregation
+            // is the only "multi-faceted" MQL tool that can both read and write,
+            // so this is enforced here regardless of readOnly / disabledTools.
+            if (this.isWriteStage(stage)) {
+                throw new MongoDBError(
+                    ErrorCodes.ForbiddenWriteOperation,
+                    "Aggregation $out/$merge stages are disabled by policy: they overwrite or replace collection data, and this server is additive-only."
+                );
             }
 
             // This ensure that you can't use $search if the cluster does not support MongoDB Search

@@ -203,61 +203,9 @@ describe("IndexCheck integration tests", () => {
                     });
                 });
 
-                describe("updateMany operations", () => {
-                    beforeEach(async () => {
-                        // Insert test data for updateMany operations
-                        await integration
-                            .mongoClient()
-                            .db(integration.randomDbName())
-                            .collection("update-test-collection")
-                            .insertMany([
-                                { name: "document1", value: 1, category: "A" },
-                                { name: "document2", value: 2, category: "B" },
-                                { name: "document3", value: 3, category: "A" },
-                            ]);
-                    });
-
-                    it("should reject updateMany queries that perform collection scans", async () => {
-                        const response = await integration.mcpClient().callTool({
-                            name: "update-many",
-                            arguments: {
-                                database: integration.randomDbName(),
-                                collection: "update-test-collection",
-                                filter: { category: "A" }, // No index on category
-                                update: { $set: { updated: true } },
-                            },
-                        });
-
-                        const content = getResponseContent(response.content);
-                        expect(content).toContain("Index check failed");
-                        expect(content).toContain("updateMany operation");
-                        expect(response.isError).toBe(true);
-                    });
-
-                    it("should allow updateMany queries with indexes", async () => {
-                        // Create an index on the category field
-                        await integration
-                            .mongoClient()
-                            .db(integration.randomDbName())
-                            .collection("update-test-collection")
-                            .createIndex({ category: 1 });
-
-                        const response = await integration.mcpClient().callTool({
-                            name: "update-many",
-                            arguments: {
-                                database: integration.randomDbName(),
-                                collection: "update-test-collection",
-                                filter: { category: "A" }, // Now has index
-                                update: { $set: { updated: true } },
-                            },
-                        });
-
-                        expect(response.isError).toBeFalsy();
-                        const content = getResponseContent(response.content);
-                        expect(content).toContain("Matched");
-                        expect(content).toContain("Modified");
-                    });
-                });
+                // NOTE: updateMany index-check tests removed — update-many is no
+                // longer registered (additive-only policy; see ToolBase.register
+                // and Phase F). Index-check coverage remains via find/count/aggregate.
 
             },
             {
@@ -340,23 +288,7 @@ describe("IndexCheck integration tests", () => {
                     expect(content).not.toContain("Index check failed");
                 });
 
-                it("should allow updateMany operations without indexes", async () => {
-                    const response = await integration.mcpClient().callTool({
-                        name: "update-many",
-                        arguments: {
-                            database: integration.randomDbName(),
-                            collection: "disabled-test-collection",
-                            filter: { category: "A" }, // No index, but should be allowed
-                            update: { $set: { updated: true } },
-                        },
-                    });
-
-                    expect(response.isError).toBeFalsy();
-                    const content = getResponseContent(response.content);
-                    expect(content).toContain("Matched");
-                    expect(content).not.toContain("Index check failed");
-                });
-
+                // updateMany test removed (additive-only policy; tool no longer registered).
             },
             {
                 getUserConfig: () => ({

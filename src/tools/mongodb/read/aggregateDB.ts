@@ -130,22 +130,14 @@ The maximum number of bytes to return in the response. This value is capped by t
             );
         }
 
-        const writeOperations: OperationType[] = ["update", "create", "delete"];
-        let writeStageForbiddenError = "";
-
-        if (this.config.readOnly) {
-            writeStageForbiddenError = "In readOnly mode you can not run pipelines with $out or $merge stages.";
-        } else if (this.config.disabledTools.some((t) => writeOperations.includes(t as OperationType))) {
-            writeStageForbiddenError =
-                "When 'create', 'update', or 'delete' operations are disabled, you can not run pipelines with $out or $merge stages.";
-        }
-
         for (const stage of pipeline) {
-            // This validates that in readOnly mode or "write" operations are disabled, we can't use $out or $merge.
-            // This is really important because aggregates are the only "multi-faceted" tool in the MQL, where you
-            // can both read and write.
-            if (this.isWriteStage(stage) && writeStageForbiddenError) {
-                throw new MongoDBError(ErrorCodes.ForbiddenWriteOperation, writeStageForbiddenError);
+            // Policy: additive-only. $out/$merge overwrite/replace collection
+            // data, so they are ALWAYS forbidden regardless of config.
+            if (this.isWriteStage(stage)) {
+                throw new MongoDBError(
+                    ErrorCodes.ForbiddenWriteOperation,
+                    "Aggregation $out/$merge stages are disabled by policy: they overwrite or replace collection data, and this server is additive-only."
+                );
             }
         }
     }

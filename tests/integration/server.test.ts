@@ -25,7 +25,7 @@ class TestToolOne extends ToolBase {
     static toolName = "test-tool-one";
     public description = "A test tool one for verification tests";
     static category: ToolCategory = "mongodb";
-    static operationType: OperationType = "update";
+    static operationType: OperationType = "read";
     public argsShape = {};
     protected async execute(): Promise<CallToolResult> {
         return Promise.resolve({
@@ -46,7 +46,7 @@ class TestToolTwo extends ToolBase {
     static toolName = "test-tool-two";
     public description = "A test tool two for verification tests";
     static category: ToolCategory = "mongodb";
-    static operationType: OperationType = "update";
+    static operationType: OperationType = "read";
     public argsShape = {};
     protected async execute(): Promise<CallToolResult> {
         return Promise.resolve({

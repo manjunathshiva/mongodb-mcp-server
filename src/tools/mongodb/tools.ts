@@ -11,8 +11,6 @@ export { CountTool } from "./read/count.js";
 export { DbStatsTool, type DbStatsOutput } from "./metadata/dbStats.js";
 export { AggregateTool } from "./read/aggregate.js";
 export { AggregateDBTool } from "./read/aggregateDB.js";
-export { UpdateManyTool, type UpdateManyOutput } from "./update/updateMany.js";
-export { RenameCollectionTool, type RenameCollectionOutput } from "./update/renameCollection.js";
 export { ExplainTool, type ExplainOutput } from "./metadata/explain.js";
 export { CreateCollectionTool, type CreateCollectionOutput } from "./create/createCollection.js";
 export { LogsTool, type LogsOutput } from "./metadata/logs.js";

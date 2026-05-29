@@ -714,13 +714,26 @@ export abstract class ToolBase<
     }
 
     public register(server: Server<TUserConfig, TContext, TMetrics>): boolean {
-        // Policy: destructive deletion is disallowed at the code level and cannot
-        // be re-enabled by configuration. Refuse to register any tool that
-        // declares operationType="delete", including custom embedder tools.
+        // Policy: this server is additive-only for MongoDB data. Destructive
+        // operations are disallowed at the code level and cannot be re-enabled
+        // by configuration. Refuse to register, for any category:
+        //   - operationType="delete"  (drops/removes)
+        // and for the `mongodb` category specifically:
+        //   - operationType="update"  (rename-collection, update-many, etc.)
+        // because those overwrite or remove existing data. `create` (insert,
+        // create-collection/index) is additive and remains allowed.
+        // NOTE: aggregation $out/$merge are destructive too but ride inside a
+        // `read`-typed tool; they are blocked separately in the aggregate tools.
         if (this.operationType === "delete") {
             throw new Error(
                 `Tool '${this.name}' has operationType='delete', which is disallowed by policy. ` +
                     `This server does not support destructive deletion operations.`
+            );
+        }
+        if (this.operationType === "update" && this.category === "mongodb") {
+            throw new Error(
+                `Tool '${this.name}' has operationType='update' in the 'mongodb' category, which is disallowed by policy. ` +
+                    `This server is additive-only: it does not support operations that overwrite or remove existing MongoDB data.`
             );
         }
 

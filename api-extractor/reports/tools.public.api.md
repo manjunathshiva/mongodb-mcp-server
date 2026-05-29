@@ -1023,37 +1023,6 @@ export abstract class MongoDBToolBase extends ToolBase {
 export type OperationType = "metadata" | "read" | "create" | "delete" | "update" | "connect";
 
 // @public (undocumented)
-export type RenameCollectionOutput = z.infer<z.ZodObject<typeof RenameCollectionOutputSchema>>;
-
-// @public (undocumented)
-export class RenameCollectionTool extends MongoDBToolBase {
-    // (undocumented)
-    argsShape: {
-        newName: z.ZodString;
-        dropTarget: z.ZodDefault<z.ZodOptional<z.ZodBoolean>>;
-        collection: z.ZodString;
-        database: z.ZodString;
-    };
-    // (undocumented)
-    description: string;
-    // (undocumented)
-    protected execute(input: ToolArgs<typeof RenameCollectionTool.argsShape>): Promise<ToolResult<typeof RenameCollectionTool.outputSchema>>;
-    // (undocumented)
-    protected handleError(error: unknown, args: ToolArgs<typeof RenameCollectionTool.argsShape>): Promise<ToolResult<typeof RenameCollectionTool.outputSchema>>;
-    // (undocumented)
-    static operationType: OperationType;
-    // (undocumented)
-    outputSchema: {
-        database: z.ZodString;
-        oldCollection: z.ZodString;
-        newCollection: z.ZodString;
-        renamed: z.ZodBoolean;
-    };
-    // (undocumented)
-    static toolName: string;
-}
-
-// @public (undocumented)
 export class SearchKnowledgeTool extends AssistantToolBase {
     // (undocumented)
     argsShape: {
@@ -1448,38 +1417,6 @@ export type ToolResult<OutputSchema extends ZodRawShape | undefined = undefined>
     }[];
     isError?: boolean;
 };
-
-// @public (undocumented)
-export type UpdateManyOutput = z.infer<z.ZodObject<typeof UpdateManyOutputSchema>>;
-
-// @public (undocumented)
-export class UpdateManyTool extends MongoDBToolBase {
-    // (undocumented)
-    argsShape: {
-        filter: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
-        update: z.ZodRecord<z.ZodString, z.ZodUnknown>;
-        upsert: z.ZodOptional<z.ZodBoolean>;
-        collection: z.ZodString;
-        database: z.ZodString;
-    };
-    // (undocumented)
-    description: string;
-    // (undocumented)
-    protected execute(input: ToolArgs<typeof UpdateManyTool.argsShape>): Promise<ToolResult<typeof UpdateManyTool.outputSchema>>;
-    // (undocumented)
-    static operationType: OperationType;
-    // (undocumented)
-    outputSchema: {
-        database: z.ZodString;
-        collection: z.ZodString;
-        matchedCount: z.ZodNumber;
-        modifiedCount: z.ZodNumber;
-        upsertedCount: z.ZodNumber;
-        upsertedId: z.ZodOptional<z.ZodString>;
-    };
-    // (undocumented)
-    static toolName: string;
-}
 
 // @public (undocumented)
 export class UpgradeClusterTool extends AtlasToolBase {

@@ -536,7 +536,7 @@ describe("ToolBase", () => {
                     v.labels.tool_name === "test-tool" &&
                     v.labels.category === "mongodb" &&
                     v.labels.status === "success" &&
-                    v.labels.operation_type === "update"
+                    v.labels.operation_type === "read"
             );
             expect(count?.value).toBe(1);
 
@@ -546,7 +546,7 @@ describe("ToolBase", () => {
                     v.labels.tool_name === "test-tool" &&
                     v.labels.category === "mongodb" &&
                     v.labels.status === "success" &&
-                    v.labels.operation_type === "update"
+                    v.labels.operation_type === "read"
             );
             expect(sum?.value).toBeGreaterThanOrEqual(0);
         });
@@ -632,5 +632,42 @@ describe("delete-operation policy", () => {
         const { AllTools } = await import("../../src/tools/index.js");
         const deleteTools = AllTools.filter((t) => t.operationType === "delete");
         expect(deleteTools).toEqual([]);
+    });
+
+    it("ToolBase.register() throws for a mongodb-category 'update' tool (additive-only)", () => {
+        class ForbiddenUpdateTool extends ToolBase {
+            static toolName = "forbidden-update";
+            static category: ToolCategory = "mongodb";
+            static operationType: OperationType = "update";
+            public description = "should never register";
+            public argsShape = {};
+            protected execute(): Promise<CallToolResult> {
+                return Promise.resolve({ content: [{ type: "text", text: "noop" }] });
+            }
+            protected resolveTelemetryMetadata(): TelemetryToolMetadata {
+                return {};
+            }
+        }
+
+        const tool = new ForbiddenUpdateTool({
+            name: ForbiddenUpdateTool.toolName,
+            category: ForbiddenUpdateTool.category,
+            operationType: ForbiddenUpdateTool.operationType,
+            session: { logger: { warning: vi.fn() } } as unknown as Session,
+            config: { confirmationRequiredTools: [], previewFeatures: [], disabledTools: [] } as unknown as UserConfig,
+            telemetry: { isTelemetryEnabled: () => false, emitEvents: vi.fn() } as unknown as Telemetry,
+            elicitation: { requestConfirmation: vi.fn() } as unknown as Elicitation,
+            uiRegistry: new UIRegistry(),
+            metrics: new MockMetrics(),
+        });
+
+        const mockServer = { mcpServer: { registerTool: vi.fn() } } as unknown as Server;
+        expect(() => tool.register(mockServer)).toThrow(/additive-only/i);
+    });
+
+    it("AllTools registry contains no mongodb-category 'update' tools (additive-only)", async () => {
+        const { AllTools } = await import("../../src/tools/index.js");
+        const updateTools = AllTools.filter((t) => t.operationType === "update" && t.category === "mongodb");
+        expect(updateTools).toEqual([]);
     });
 });
