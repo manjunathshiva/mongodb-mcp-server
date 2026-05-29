@@ -30,13 +30,17 @@ RUN corepack enable
 COPY . .
 
 # Install dev+prod deps (scripts ignored — matches the repo's normal posture,
-# the native deps it lists are not compiled), build the ESM+CJS workspace
-# output, then prune to production dependencies in place. Build runs before
-# the prune so devDeps (tsc, tsx, vite, ...) are available during compile.
+# the native deps it lists are not compiled) and build the ESM+CJS workspace
+# output. Then `pnpm deploy` produces a SELF-CONTAINED /deploy directory with
+# only the package's published files (dist/) and production dependencies —
+# workspace deps (@mongodb-js/mcp-metrics, mcp-types) are injected as real
+# copies, not symlinks. This is what actually shrinks the image: an in-place
+# `pnpm install --prod` does not reclaim space because pnpm's content-
+# addressable .pnpm store retains every previously-installed (dev) package.
 RUN corepack prepare pnpm@10.33.2 --activate \
     && pnpm install --frozen-lockfile --ignore-scripts \
     && pnpm run build \
-    && pnpm install --prod --frozen-lockfile --ignore-scripts
+    && pnpm --filter=mongodb-mcp-server deploy --prod --legacy /deploy
 
 # ---- runtime ---------------------------------------------------------------
 FROM node:24-alpine AS runtime
@@ -46,12 +50,9 @@ RUN addgroup -S mcp && adduser -S mcp -G mcp
 
 WORKDIR /home/mcp/app
 
-# Copy the built tree with production-only node_modules. The pnpm workspace
-# packages (@mongodb-js/mcp-metrics, @mongodb-js/mcp-types) are symlinked from
-# node_modules into packages/*/dist, so the whole tree is copied to keep those
-# links valid. tests/browser and other dev workspace members were pruned by
-# the production install above.
-COPY --from=builder --chown=mcp:mcp /src ./
+# Copy only the self-contained production deploy (dist/ + prod node_modules).
+# No source, tests, scripts, or dev dependencies.
+COPY --from=builder --chown=mcp:mcp /deploy ./
 
 USER mcp
 
