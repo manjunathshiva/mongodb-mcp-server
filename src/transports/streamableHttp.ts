@@ -239,37 +239,72 @@ export class StreamableHttpRunner<
             throw new Error("Monitoring server port cannot be the same as httpPort.");
         }
 
-        if (this.shouldWarnAboutHttpHost(this.userConfig.httpHost)) {
-            if (!this.userConfig.oauthIssuer || !this.userConfig.oauthAudience) {
-                // OWASP MCP07: a non-loopback bind without authentication is
-                // an open back door into the MCP server (and through it, the
-                // configured MongoDB cluster). Refuse to start rather than
-                // log a warning and continue.
-                throw new Error(
-                    `Refusing to start: httpHost=${this.userConfig.httpHost} is non-loopback and OAuth authentication is not configured. ` +
-                        `Set oauthIssuer + oauthAudience (and configure your OIDC provider) to enable bearer-token auth, ` +
-                        `or bind to 127.0.0.1 / localhost / ::1 for local-only access.`
-                );
-            }
-
-            this.logger.warning({
-                id: LogId.streamableHttpTransportHttpHostWarning,
-                context: "streamableHttpTransport",
-                message: `Binding to ${this.userConfig.httpHost}. OAuth bearer-token authentication is enabled (issuer=${this.userConfig.oauthIssuer}).`,
-                noRedaction: true,
-            });
-        }
-
         // Config-shape rule: oauthIssuer and oauthAudience must be set
         // together. Specifying one without the other is almost certainly
         // a misconfiguration; fail loudly instead of silently disabling
-        // auth.
+        // auth. (Checked before the bind guard so the error is precise.)
         if (Boolean(this.userConfig.oauthIssuer) !== Boolean(this.userConfig.oauthAudience)) {
             throw new Error(
                 "oauthIssuer and oauthAudience must be configured together. " +
                     `Got oauthIssuer=${this.userConfig.oauthIssuer ?? "<unset>"}, ` +
                     `oauthAudience=${this.userConfig.oauthAudience ?? "<unset>"}.`
             );
+        }
+
+        const hasInAppOauth = Boolean(this.userConfig.oauthIssuer && this.userConfig.oauthAudience);
+        const hasSharedSecretHeader = Object.keys(this.userConfig.httpHeaders ?? {}).length > 0;
+        const isPlatformAuth = this.userConfig.httpAuthMode === "platform";
+
+        // OWASP MCP07: 'platform' mode delegates identity verification to an
+        // upstream reverse proxy / gateway (e.g. Azure Container Apps
+        // EasyAuth). To keep the guarantee that the app itself never serves
+        // an unauthenticated request, we REQUIRE at least one httpHeaders
+        // shared-secret entry as a second, app-enforced layer. Refusing here
+        // means the defense-in-depth is mandatory and code-enforced rather
+        // than operator-remembered.
+        if (isPlatformAuth && !hasSharedSecretHeader) {
+            throw new Error(
+                "Refusing to start: httpAuthMode=platform requires at least one httpHeaders shared-secret entry " +
+                    "so the app rejects unauthenticated requests even though identity is verified at the edge. " +
+                    "Set httpHeaders (e.g. an 'x-mcp-key' header), or use httpAuthMode=oauth for in-app token validation."
+            );
+        }
+
+        if (this.shouldWarnAboutHttpHost(this.userConfig.httpHost)) {
+            if (!hasInAppOauth && !isPlatformAuth) {
+                // OWASP MCP07: a non-loopback bind without authentication is
+                // an open back door into the MCP server (and through it, the
+                // configured MongoDB cluster). Refuse to start rather than
+                // log a warning and continue.
+                throw new Error(
+                    `Refusing to start: httpHost=${this.userConfig.httpHost} is non-loopback and no authentication is configured. ` +
+                        `Set oauthIssuer + oauthAudience for in-app bearer-token auth, ` +
+                        `set httpAuthMode=platform (with an httpHeaders shared secret) when an authenticating gateway sits in front, ` +
+                        `or bind to 127.0.0.1 / localhost / ::1 for local-only access.`
+                );
+            }
+
+            if (isPlatformAuth) {
+                // Loud, auditable acknowledgement that the app is trusting an
+                // upstream gateway for identity. Operators MUST ensure that
+                // gateway (e.g. ACA EasyAuth) actually validates callers.
+                this.logger.warning({
+                    id: LogId.streamableHttpTransportHttpHostWarning,
+                    context: "streamableHttpTransport",
+                    message:
+                        `Binding to ${this.userConfig.httpHost} with httpAuthMode=platform: identity verification is DELEGATED to an upstream gateway ` +
+                        `(e.g. Azure Container Apps EasyAuth / Microsoft Entra). The app enforces a shared-secret header as a second layer, ` +
+                        `but you MUST ensure the gateway authenticates callers — otherwise the server is effectively exposed with only a static secret.`,
+                    noRedaction: true,
+                });
+            } else {
+                this.logger.warning({
+                    id: LogId.streamableHttpTransportHttpHostWarning,
+                    context: "streamableHttpTransport",
+                    message: `Binding to ${this.userConfig.httpHost}. OAuth bearer-token authentication is enabled (issuer=${this.userConfig.oauthIssuer}).`,
+                    noRedaction: true,
+                });
+            }
         }
     }
 }

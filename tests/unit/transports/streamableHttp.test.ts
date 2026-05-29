@@ -6,6 +6,7 @@ import {
 } from "../../../src/transports/streamableHttp.js";
 import { MonitoringServer } from "../../../src/transports/monitoringServer.js";
 import { defaultTestConfig } from "../../integration/helpers.js";
+import { UserConfigSchema } from "../../../src/common/config/userConfig.js";
 import type express from "express";
 import type { DefaultMetrics, Metrics } from "../../../src/lib.js";
 import { NullLogger } from "../../../src/common/logging/index.js";
@@ -277,11 +278,11 @@ describe("StreamableHttpRunner: OAuth config validation", () => {
         runner = undefined;
     });
 
-    it("refuses to start on non-loopback httpHost when oauthIssuer is not set", async () => {
+    it("refuses to start on non-loopback httpHost when no auth is configured", async () => {
         runner = new StreamableHttpRunner({
             userConfig: { ...defaultTestConfig, httpHost: "0.0.0.0", httpPort: 0 },
         });
-        await expect(runner.start()).rejects.toThrow(/Refusing to start.*non-loopback.*OAuth authentication is not configured/);
+        await expect(runner.start()).rejects.toThrow(/Refusing to start.*non-loopback.*no authentication is configured/);
     });
 
     it("refuses to start when oauthIssuer is set but oauthAudience is missing", async () => {
@@ -316,6 +317,46 @@ describe("StreamableHttpRunner: OAuth config validation", () => {
             userConfig: { ...defaultTestConfig, httpHost: "127.0.0.1", httpPort: 0 },
         });
         await expect(runner.start()).resolves.toBeUndefined();
+    });
+
+    // OWASP MCP07 — httpAuthMode=platform escape hatch (auth enforced by an
+    // upstream gateway, e.g. Azure Container Apps EasyAuth). A shared-secret
+    // header is mandatory so the app still rejects unauthenticated requests.
+    it("refuses platform mode without a shared-secret header even on loopback", async () => {
+        runner = new StreamableHttpRunner({
+            userConfig: { ...defaultTestConfig, httpHost: "127.0.0.1", httpPort: 0, httpAuthMode: "platform" },
+        });
+        await expect(runner.start()).rejects.toThrow(
+            /httpAuthMode=platform requires at least one httpHeaders shared-secret entry/
+        );
+    });
+
+    it("refuses platform mode on non-loopback bind without a shared-secret header", async () => {
+        runner = new StreamableHttpRunner({
+            userConfig: { ...defaultTestConfig, httpHost: "0.0.0.0", httpPort: 0, httpAuthMode: "platform" },
+        });
+        await expect(runner.start()).rejects.toThrow(
+            /httpAuthMode=platform requires at least one httpHeaders shared-secret entry/
+        );
+    });
+
+    it("permits platform mode on non-loopback bind WITH a shared-secret header", async () => {
+        runner = new StreamableHttpRunner({
+            userConfig: {
+                ...defaultTestConfig,
+                httpHost: "0.0.0.0",
+                httpPort: 0,
+                httpAuthMode: "platform",
+                httpHeaders: { "x-mcp-key": "s3cret" },
+            },
+        });
+        await expect(runner.start()).resolves.toBeUndefined();
+    });
+
+    it("accepts azure-managed-identity as an alias for platform", () => {
+        // Parsed through the schema so the alias preprocessing is exercised.
+        const parsed = UserConfigSchema.parse({ httpAuthMode: "azure-managed-identity" });
+        expect(parsed.httpAuthMode).toBe("platform");
     });
 });
 

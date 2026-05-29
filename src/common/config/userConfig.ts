@@ -172,6 +172,23 @@ const ServerConfigSchema = z.object({
             "How long (in ms) to cache the OIDC issuer's JWKS before re-fetching. Default 10 minutes. Lower values reduce key-rotation latency at the cost of more outbound requests to the issuer."
         )
         .register(configRegistry, { overrideBehavior: "not-allowed" }),
+    httpAuthMode: z
+        .preprocess(
+            // Accept `azure-managed-identity` as an alias for `platform` so the
+            // Azure Container Apps bicep param (MDB_MCP_HTTP_AUTH_MODE=
+            // azure-managed-identity) drops in without translation.
+            (val) => (val === "azure-managed-identity" ? "platform" : val),
+            z.enum(["none", "oauth", "platform"])
+        )
+        .default("none")
+        .describe(
+            "How the HTTP transport authenticates requests. " +
+                "'none': no app-level auth (only permitted on a loopback bind). " +
+                "'oauth': validate Authorization: Bearer JWTs in-app (requires oauthIssuer + oauthAudience). " +
+                "'platform': authentication is enforced by an upstream reverse proxy / gateway (e.g. Azure Container Apps EasyAuth). " +
+                "In 'platform' mode a non-loopback bind is permitted, but at least one httpHeaders shared-secret entry is REQUIRED so the app still rejects unauthenticated requests (defense in depth). 'azure-managed-identity' is accepted as an alias for 'platform'."
+        )
+        .register(configRegistry, { overrideBehavior: "not-allowed" }),
     idleTimeoutMs: z.coerce
         .number()
         .default(600_000)

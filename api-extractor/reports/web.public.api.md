@@ -1158,6 +1158,11 @@ export const UserConfigSchema: z.ZodObject<{
     oauthIssuer: z.ZodOptional<z.ZodString>;
     oauthAudience: z.ZodOptional<z.ZodString>;
     oauthJwksCacheTtlMs: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    httpAuthMode: z.ZodDefault<z.ZodPreprocess<z.ZodEnum<{
+        platform: "platform";
+        none: "none";
+        oauth: "oauth";
+    }>>>;
     idleTimeoutMs: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     notificationTimeoutMs: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     maxBytesPerQuery: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
